@@ -90,6 +90,13 @@ dependencies:
   geolocator: ^10.1.1
   geocoding: ^2.2.2
   
+  # Notifications
+  flutter_local_notifications: ^17.2.3
+  timezone: ^0.9.4
+  
+  # Google Books API
+  dio: ^5.4.3+1
+  
   # Image Handling
   image_picker: ^1.0.7
   
