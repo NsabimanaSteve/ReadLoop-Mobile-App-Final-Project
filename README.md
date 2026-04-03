@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # readloop_project
 
 
@@ -30,3 +31,7 @@ For help getting started with Flutter development, view the
 
 samples, guidance on mobile development, and a full API reference.
 
+=======
+# ReadLoop-Mobile-App-Final-Project
+A Flutter mobile app for tracking reading progress with live MySQL database, user authentication, and reading circles. Built with Flutter, PHP API, and MySQL.
+>>>>>>> 643736a21cdbdce482a6cc35195861f3e698cd66
