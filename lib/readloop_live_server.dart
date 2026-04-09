@@ -5,12 +5,13 @@ import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'package:permission_handler/permission_handler.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
-import 'services/google_books_service.dart';
+import 'services/google_books_service_fixed.dart';
 import 'services/notification_service.dart';
 import 'services/reading_stats_service.dart';
 import 'models/reading_session.dart';
+import 'login_page.dart';
 
-// ─── MODELS ───────────────────────────────────────────────────────────────────
+// MODELS 
 
 class ReadingGoal {
   int dailyPages;
@@ -122,19 +123,22 @@ class Book {
   );
 }
 
-// ─── API SERVICE ──────────────────────────────────────────────────────────────
+//  API SERVICE 
 
 class ApiService {
   static const String baseUrl =
       'http://169.239.251.102:280/~steve.nsabimana/api/index.php';
 
-  static Future<Map<String, dynamic>> login(
-      String email, String password) async {
+  static Future<Map<String, dynamic>> login(String email, String password) async {
     final response = await http.post(
       Uri.parse('$baseUrl/login'),
       headers: {'Content-Type': 'application/json'},
-      body: json.encode({'email': email, 'password': password}),
+      body: json.encode({
+        'email': email,
+        'password': password,
+      }),
     ).timeout(const Duration(seconds: 10));
+    print('Login response: ${response.body}'); // Debug server response
     return json.decode(response.body);
   }
 
@@ -147,8 +151,10 @@ class ApiService {
         'email': email,
         'password': password,
         'displayName': displayName,
+        'phone': '',
       }),
     ).timeout(const Duration(seconds: 10));
+    print('Register response: ${response.body}'); // Debug server response
     return json.decode(response.body);
   }
 
@@ -234,7 +240,7 @@ class ApiService {
   }
 }
 
-// ─── PROVIDERS ────────────────────────────────────────────────────────────────
+//  PROVIDERS 
 
 class UserProvider extends ChangeNotifier {
   User? _currentUser;
@@ -251,7 +257,6 @@ class UserProvider extends ChangeNotifier {
   }
 
   Future<void> login(String email, String password) async {
-    setLoading(true);
     try {
       final result = await ApiService.login(email, password);
       if (result['success'] == true) {
@@ -262,68 +267,45 @@ class UserProvider extends ChangeNotifier {
         await prefs.setBool('isLoggedIn', true);
         notifyListeners();
       } else {
-        print('Server response: $result');
-        if (result['message']?.toString().toLowerCase().contains('email') ==
-                true ||
-            result['error']?.toString().toLowerCase().contains('email') ==
-                true) {
-          throw Exception(
-              'No account found with this email. Please check your email or sign up.');
-        } else if (result['message']
-                    ?.toString()
-                    .toLowerCase()
-                    .contains('password') ==
-                true ||
-            result['error']
-                    ?.toString()
-                    .toLowerCase()
-                    .contains('password') ==
-                true) {
+        if (result['message']?.toString().toLowerCase().contains('email') == true ||
+            result['error']?.toString().toLowerCase().contains('email') == true) {
+          throw Exception('No account found with this email. Please check your email or sign up.');
+        } else if (result['message']?.toString().toLowerCase().contains('password') == true ||
+            result['error']?.toString().toLowerCase().contains('password') == true) {
           throw Exception('Incorrect password. Please try again.');
         } else {
-          throw Exception(result['message'] ??
-              result['error'] ??
-              'Invalid login credentials');
+          throw Exception(result['message'] ?? result['error'] ?? 'Invalid login credentials');
         }
       }
     } catch (e) {
+      rethrow; 
+    } finally {
       setLoading(false);
-      rethrow;
     }
-    setLoading(false);
   }
 
-  Future<void> register(
-      String email, String password, String displayName) async {
+  Future<void> register(String email, String password, String displayName) async {
     setLoading(true);
     try {
       final result = await ApiService.register(email, password, displayName);
       if (result['success'] == true) {
+        setLoading(false); // Reset loading before login
         await login(email, password);
         return;
       } else {
-        print('Registration response: $result');
-        if (result['message']?.toString().toLowerCase().contains('email') ==
-                true ||
-            result['error']?.toString().toLowerCase().contains('email') ==
-                true ||
-            result['message']?.toString().toLowerCase().contains('exists') ==
-                true ||
-            result['error']?.toString().toLowerCase().contains('exists') ==
-                true) {
-          throw Exception(
-              'An account with this email already exists. Please use a different email or try logging in.');
+        if (result['message']?.toString().toLowerCase().contains('email') == true ||
+            result['error']?.toString().toLowerCase().contains('email') == true ||
+            result['message']?.toString().toLowerCase().contains('exists') == true ||
+            result['error']?.toString().toLowerCase().contains('exists') == true) {
+          throw Exception('An account with this email already exists. Please use a different email or try logging in.');
         } else {
-          throw Exception(result['message'] ??
-              result['error'] ??
-              'Registration failed. Please try again.');
+          throw Exception(result['message'] ?? result['error'] ?? 'Registration failed. Please try again.');
         }
       }
     } catch (e) {
       setLoading(false);
       rethrow;
     }
-    setLoading(false);
   }
 
   Future<void> logout() async {
@@ -456,7 +438,7 @@ class BookProvider extends ChangeNotifier {
   }
 }
 
-// ─── MAIN ─────────────────────────────────────────────────────────────────────
+//  MAIN 
 
 void main() {
   runApp(const ReadLoopApp());
@@ -494,7 +476,7 @@ class _ReadLoopAppState extends State<ReadLoopApp> {
   }
 }
 
-// ─── AUTH WRAPPER ─────────────────────────────────────────────────────────────
+//  AUTH WRAPPER 
 
 class AuthWrapper extends StatefulWidget {
   const AuthWrapper({super.key});
@@ -521,258 +503,14 @@ class _AuthWrapperState extends State<AuthWrapper> {
         }
         return userProvider.isLoggedIn
             ? const MainScreen()
-            : const LoginScreen();
+            : const LoginPage();
       },
     );
   }
 }
 
-// ─── LOGIN SCREEN ─────────────────────────────────────────────────────────────
 
-class LoginScreen extends StatefulWidget {
-  const LoginScreen({super.key});
-  @override
-  State<LoginScreen> createState() => _LoginScreenState();
-}
-
-class _LoginScreenState extends State<LoginScreen> {
-  bool _isLogin = true;
-  final _formKey = GlobalKey<FormState>();
-  final _emailController = TextEditingController();
-  final _passwordController = TextEditingController();
-  final _displayNameController = TextEditingController();
-
-  @override
-  void dispose() {
-    _emailController.dispose();
-    _passwordController.dispose();
-    _displayNameController.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      body: Container(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: [Colors.blue.shade400, Colors.blue.shade700],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: Center(
-          child: SingleChildScrollView(
-            padding: const EdgeInsets.all(24.0),
-            child: Card(
-              elevation: 20,
-              shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(20)),
-              child: Padding(
-                padding: const EdgeInsets.all(32.0),
-                child: Form(
-                  key: _formKey,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Container(
-                        width: 80,
-                        height: 80,
-                        decoration: BoxDecoration(
-                          color: Colors.blue.shade100,
-                          borderRadius: BorderRadius.circular(40),
-                        ),
-                        child: const Icon(Icons.menu_book,
-                            size: 40, color: Colors.blue),
-                      ),
-                      const SizedBox(height: 24),
-                      Text(
-                        _isLogin ? 'Welcome Back!' : 'Join ReadLoop',
-                        style: TextStyle(
-                          fontSize: 28,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.blue.shade700,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        _isLogin
-                            ? 'Sign in to continue reading'
-                            : 'Create your account',
-                        style: TextStyle(
-                            fontSize: 16, color: Colors.grey.shade600),
-                      ),
-                      const SizedBox(height: 32),
-                      if (!_isLogin) ...[
-                        TextFormField(
-                          controller: _displayNameController,
-                          decoration: InputDecoration(
-                            labelText: 'Display Name',
-                            prefixIcon: const Icon(Icons.person),
-                            border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(12)),
-                          ),
-                          validator: (v) => v == null || v.isEmpty
-                              ? 'Please enter your name'
-                              : null,
-                        ),
-                        const SizedBox(height: 16),
-                      ],
-                      TextFormField(
-                        controller: _emailController,
-                        keyboardType: TextInputType.emailAddress,
-                        decoration: InputDecoration(
-                          labelText: 'Email',
-                          prefixIcon: const Icon(Icons.email),
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                        validator: (v) {
-                          if (v == null || v.isEmpty) return 'Enter your email';
-                          final email = v.toLowerCase().trim();
-                          if (!RegExp(
-                                  r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-                              .hasMatch(email)) {
-                            return 'Enter a valid email (e.g., name@example.com)';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 16),
-                      TextFormField(
-                        controller: _passwordController,
-                        obscureText: true,
-                        decoration: InputDecoration(
-                          labelText: 'Password',
-                          prefixIcon: const Icon(Icons.lock),
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(12)),
-                        ),
-                        validator: (v) {
-                          if (v == null || v.isEmpty)
-                            return 'Password is required';
-                          if (!_isLogin) {
-                            if (v.length < 8)
-                              return 'Password must be at least 8 characters long';
-                            if (!RegExp(r'[A-Z]').hasMatch(v))
-                              return 'Password must contain at least one uppercase letter (A-Z)';
-                            if (!RegExp(r'[a-z]').hasMatch(v))
-                              return 'Password must contain at least one lowercase letter (a-z)';
-                            if (!RegExp(r'[!@#$%^&*()_+\-=\[\]{};:,.<>?]')
-                                .hasMatch(v))
-                              return 'Password must contain at least one special character';
-                          }
-                          return null;
-                        },
-                      ),
-                      const SizedBox(height: 32),
-                      Consumer<UserProvider>(
-                        builder: (context, userProvider, child) => SizedBox(
-                          width: double.infinity,
-                          height: 50,
-                          child: ElevatedButton(
-                            onPressed: userProvider.isLoading
-                                ? null
-                                : () async {
-                                    if (_formKey.currentState!.validate()) {
-                                      try {
-                                        if (_isLogin) {
-                                          await userProvider.login(
-                                            _emailController.text
-                                                .trim()
-                                                .toLowerCase(),
-                                            _passwordController.text,
-                                          );
-                                          if (!mounted) return;
-                                          final bookProvider =
-                                              Provider.of<BookProvider>(
-                                                  context,
-                                                  listen: false);
-                                          await bookProvider.loadBooks(
-                                              userProvider.currentUser!.id);
-                                        } else {
-                                          await userProvider.register(
-                                            _emailController.text
-                                                .trim()
-                                                .toLowerCase(),
-                                            _passwordController.text,
-                                            _displayNameController.text.trim(),
-                                          );
-                                          if (!mounted) return;
-                                          final bookProvider =
-                                              Provider.of<BookProvider>(
-                                                  context,
-                                                  listen: false);
-                                          await bookProvider.loadBooks(
-                                              userProvider.currentUser!.id);
-                                        }
-                                      } catch (e) {
-                                        if (!mounted) return;
-                                        ScaffoldMessenger.of(context)
-                                            .showSnackBar(
-                                          SnackBar(
-                                            content: Text(e
-                                                .toString()
-                                                .replaceAll('Exception: ', '')),
-                                            backgroundColor: Colors.red,
-                                            duration:
-                                                const Duration(seconds: 4),
-                                          ),
-                                        );
-                                      }
-                                    }
-                                  },
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: Colors.blue.shade600,
-                              foregroundColor: Colors.white,
-                              shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(12)),
-                            ),
-                            child: userProvider.isLoading
-                                ? const SizedBox(
-                                    width: 20,
-                                    height: 20,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      valueColor: AlwaysStoppedAnimation<Color>(
-                                          Colors.white),
-                                    ),
-                                  )
-                                : Text(
-                                    _isLogin ? 'Sign In' : 'Sign Up',
-                                    style: const TextStyle(
-                                        fontSize: 16,
-                                        fontWeight: FontWeight.bold),
-                                  ),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 16),
-                      TextButton(
-                        onPressed: () =>
-                            setState(() => _isLogin = !_isLogin),
-                        child: Text(
-                          _isLogin
-                              ? "Don't have an account? Sign Up"
-                              : "Already have an account? Sign In",
-                          style: TextStyle(
-                              color: Colors.blue.shade600,
-                              fontWeight: FontWeight.w600),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// ─── MAIN SCREEN ──────────────────────────────────────────────────────────────
+//  MAIN SCREEN 
 
 class MainScreen extends StatefulWidget {
   const MainScreen({super.key});
@@ -872,8 +610,7 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
   }
 }
 
-// ─── HOME TAB ─────────────────────────────────────────────────────────────────
-
+//  HOME TAB 
 class HomeTab extends StatelessWidget {
   const HomeTab({super.key});
 
@@ -1383,19 +1120,95 @@ class HomeTab extends StatelessWidget {
   }
 }
 
-// ─── BOOKS TAB ────────────────────────────────────────────────────────────────
+// BOOKS TAB
 
-class BooksTab extends StatelessWidget {
+class BooksTab extends StatefulWidget {
   const BooksTab({super.key});
+
+  @override
+  State<BooksTab> createState() => _BooksTabState();
+}
+
+class _BooksTabState extends State<BooksTab> with SingleTickerProviderStateMixin {
+  late TabController _tabController;
+  String _selectedFilter = 'all';
+
+  @override
+  void initState() {
+    super.initState();
+    _tabController = TabController(length: 4, vsync: this);
+  }
+
+  @override
+  void dispose() {
+    _tabController.dispose();
+    super.dispose();
+  }
+
+  List<Book> _getFilteredBooks(List<Book> allBooks) {
+    switch (_selectedFilter) {
+      case 'reading':
+        return allBooks.where((book) => book.status == 'currently_reading').toList();
+      case 'finished':
+        return allBooks.where((book) => book.status == 'finished').toList();
+      case 'to_start':
+        return allBooks.where((book) => book.status == 'want_to_read').toList();
+      default:
+        return allBooks;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer2<BookProvider, UserProvider>(
       builder: (context, bookProvider, userProvider, child) {
+        final filteredBooks = _getFilteredBooks(bookProvider.books);
+        
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(children: [
+              // Filter Tabs
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade100,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: TabBar(
+                  controller: _tabController,
+                  isScrollable: true,
+                  labelColor: Colors.blue.shade600,
+                  unselectedLabelColor: Colors.grey.shade600,
+                  indicatorColor: Colors.blue.shade600,
+                  indicatorWeight: 3,
+                  labelStyle: const TextStyle(fontWeight: FontWeight.w600),
+                  tabs: const [
+                    Tab(text: 'All Books'),
+                    Tab(text: 'Reading'),
+                    Tab(text: 'Finished'),
+                    Tab(text: 'To Start'),
+                  ],
+                  onTap: (index) {
+                    setState(() {
+                      switch (index) {
+                        case 0:
+                          _selectedFilter = 'all';
+                          break;
+                        case 1:
+                          _selectedFilter = 'reading';
+                          break;
+                        case 2:
+                          _selectedFilter = 'finished';
+                          break;
+                        case 3:
+                          _selectedFilter = 'to_start';
+                          break;
+                      }
+                    });
+                  },
+                ),
+              ),
+              const SizedBox(height: 16),
               Row(children: [
                 Expanded(
                   child: Container(
@@ -1447,7 +1260,7 @@ class BooksTab extends StatelessWidget {
                         ]),
                   ),
                 )
-              else if (bookProvider.books.isEmpty)
+              else if (filteredBooks.isEmpty)
                 Expanded(
                   child: Center(
                     child: Column(
@@ -1456,12 +1269,12 @@ class BooksTab extends StatelessWidget {
                           Icon(Icons.book_outlined,
                               size: 80, color: Colors.grey.shade400),
                           const SizedBox(height: 16),
-                          Text('No books yet!',
+                          Text('No books in this category!',
                               style: TextStyle(
                                   fontSize: 20,
                                   color: Colors.grey.shade600)),
                           const SizedBox(height: 8),
-                          Text('Add a book from the Home tab',
+                          Text('Try a different filter or add books',
                               style: TextStyle(
                                   color: Colors.grey.shade500)),
                         ]),
@@ -1476,9 +1289,9 @@ class BooksTab extends StatelessWidget {
                             childAspectRatio: 0.65,
                             crossAxisSpacing: 16,
                             mainAxisSpacing: 16),
-                    itemCount: bookProvider.books.length,
+                    itemCount: filteredBooks.length,
                     itemBuilder: (context, index) => _buildBookCard(
-                        bookProvider.books[index],
+                        filteredBooks[index],
                         context,
                         userProvider.currentUser?.id ?? ''),
                   ),
@@ -1647,7 +1460,7 @@ class BooksTab extends StatelessWidget {
   }
 }
 
-// ─── CIRCLES TAB ──────────────────────────────────────────────────────────────
+//  CIRCLES TAB 
 
 class CirclesTab extends StatelessWidget {
   const CirclesTab({super.key});
@@ -1659,12 +1472,36 @@ class CirclesTab extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          const Text('Reading Circles',
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          // Header with Discover
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              const Text('Reading Circles',
+                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                decoration: BoxDecoration(
+                  color: Colors.blue.shade600,
+                  borderRadius: BorderRadius.circular(20),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.explore, color: Colors.white, size: 18),
+                    const SizedBox(width: 6),
+                    const Text('Discover',
+                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
+                  ],
+                ),
+              ),
+            ],
+          ),
           const SizedBox(height: 8),
           Text('Join reading communities and discuss books together',
               style: TextStyle(fontSize: 14, color: Colors.grey.shade600)),
           const SizedBox(height: 20),
+          
+          // Location Section
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -1674,7 +1511,8 @@ class CirclesTab extends StatelessWidget {
               Icon(Icons.location_on, color: Colors.blue.shade600),
               const SizedBox(width: 8),
               const Expanded(
-                  child: Text('Location-based circles coming soon!')),
+                  child: Text('Discover circles near you')),
+              Icon(Icons.chevron_right, color: Colors.blue.shade600),
             ]),
           ),
           const SizedBox(height: 20),
@@ -1751,7 +1589,7 @@ class CirclesTab extends StatelessWidget {
   }
 }
 
-// ─── PROFILE TAB ─────────────────────────────────────────────────────────────
+// PROFILE TAB 
 
 class ProfileTab extends StatefulWidget {
   const ProfileTab({super.key});
@@ -1788,27 +1626,27 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
                 child: Column(children: [
                   Container(
-                    width: 90,
-                    height: 90,
+                    width: 100,
+                    height: 100,
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(45),
+                      borderRadius: BorderRadius.circular(50),
                       border: Border.all(color: Colors.white, width: 3),
                     ),
                     child: const Icon(Icons.person,
-                        size: 40, color: Colors.white),
+                        size: 45, color: Colors.white),
                   ),
                   const SizedBox(height: 16),
                   Text(user.displayName,
                       style: const TextStyle(
-                          fontSize: 22,
+                          fontSize: 24,
                           fontWeight: FontWeight.bold,
                           color: Colors.white)),
                   const SizedBox(height: 4),
                   Text(user.email,
                       style: const TextStyle(
                           color: Colors.white70, fontSize: 14)),
-                  const SizedBox(height: 16),
+                  const SizedBox(height: 20),
                   Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [

@@ -230,7 +230,7 @@ class _AuthWrapperState extends State<AuthWrapper> {
           );
         }
         
-        return userProvider.isLoggedIn ? const MainScreen() : const LoginScreen();
+        return userProvider.isLoggedIn ? const MainScreen() : const LoginPage();
       },
     );
   }
@@ -371,8 +371,8 @@ class _LoginScreenState extends State<LoginScreen> {
                           if (value == null || value.isEmpty) {
                             return 'Please enter your password';
                           }
-                          if (value.length < 6) {
-                            return 'Password must be at least 6 characters';
+                          if (value.length < 8) {
+                            return 'Password must be at least 8 characters';
                           }
                           return null;
                         },
