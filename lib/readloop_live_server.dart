@@ -129,16 +129,13 @@ class ApiService {
   static const String baseUrl =
       'http://169.239.251.102:280/~steve.nsabimana/api/index.php';
 
-  static Future<Map<String, dynamic>> login(String email, String password) async {
+  static Future<Map<String, dynamic>> login(
+      String email, String password) async {
     final response = await http.post(
       Uri.parse('$baseUrl/login'),
       headers: {'Content-Type': 'application/json'},
-      body: json.encode({
-        'email': email,
-        'password': password,
-      }),
+      body: json.encode({'email': email, 'password': password}),
     ).timeout(const Duration(seconds: 10));
-    print('Login response: ${response.body}'); // Debug server response
     return json.decode(response.body);
   }
 
@@ -151,10 +148,8 @@ class ApiService {
         'email': email,
         'password': password,
         'displayName': displayName,
-        'phone': '',
       }),
     ).timeout(const Duration(seconds: 10));
-    print('Register response: ${response.body}'); // Debug server response
     return json.decode(response.body);
   }
 
@@ -257,6 +252,7 @@ class UserProvider extends ChangeNotifier {
   }
 
   Future<void> login(String email, String password) async {
+    setLoading(true);
     try {
       final result = await ApiService.login(email, password);
       if (result['success'] == true) {
@@ -267,45 +263,68 @@ class UserProvider extends ChangeNotifier {
         await prefs.setBool('isLoggedIn', true);
         notifyListeners();
       } else {
-        if (result['message']?.toString().toLowerCase().contains('email') == true ||
-            result['error']?.toString().toLowerCase().contains('email') == true) {
-          throw Exception('No account found with this email. Please check your email or sign up.');
-        } else if (result['message']?.toString().toLowerCase().contains('password') == true ||
-            result['error']?.toString().toLowerCase().contains('password') == true) {
+        print('Server response: $result');
+        if (result['message']?.toString().toLowerCase().contains('email') ==
+                true ||
+            result['error']?.toString().toLowerCase().contains('email') ==
+                true) {
+          throw Exception(
+              'No account found with this email. Please check your email or sign up.');
+        } else if (result['message']
+                    ?.toString()
+                    .toLowerCase()
+                    .contains('password') ==
+                true ||
+            result['error']
+                    ?.toString()
+                    .toLowerCase()
+                    .contains('password') ==
+                true) {
           throw Exception('Incorrect password. Please try again.');
         } else {
-          throw Exception(result['message'] ?? result['error'] ?? 'Invalid login credentials');
-        }
-      }
-    } catch (e) {
-      rethrow; 
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  Future<void> register(String email, String password, String displayName) async {
-    setLoading(true);
-    try {
-      final result = await ApiService.register(email, password, displayName);
-      if (result['success'] == true) {
-        setLoading(false); // Reset loading before login
-        await login(email, password);
-        return;
-      } else {
-        if (result['message']?.toString().toLowerCase().contains('email') == true ||
-            result['error']?.toString().toLowerCase().contains('email') == true ||
-            result['message']?.toString().toLowerCase().contains('exists') == true ||
-            result['error']?.toString().toLowerCase().contains('exists') == true) {
-          throw Exception('An account with this email already exists. Please use a different email or try logging in.');
-        } else {
-          throw Exception(result['message'] ?? result['error'] ?? 'Registration failed. Please try again.');
+          throw Exception(result['message'] ??
+              result['error'] ??
+              'Invalid login credentials');
         }
       }
     } catch (e) {
       setLoading(false);
       rethrow;
     }
+    setLoading(false);
+  }
+
+  Future<void> register(
+      String email, String password, String displayName) async {
+    setLoading(true);
+    try {
+      final result = await ApiService.register(email, password, displayName);
+      if (result['success'] == true) {
+        await login(email, password);
+        return;
+      } else {
+        print('Registration response: $result');
+        if (result['message']?.toString().toLowerCase().contains('email') ==
+                true ||
+            result['error']?.toString().toLowerCase().contains('email') ==
+                true ||
+            result['message']?.toString().toLowerCase().contains('exists') ==
+                true ||
+            result['error']?.toString().toLowerCase().contains('exists') ==
+                true) {
+          throw Exception(
+              'An account with this email already exists. Please use a different email or try logging in.');
+        } else {
+          throw Exception(result['message'] ??
+              result['error'] ??
+              'Registration failed. Please try again.');
+        }
+      }
+    } catch (e) {
+      setLoading(false);
+      rethrow;
+    }
+    setLoading(false);
   }
 
   Future<void> logout() async {
@@ -1122,93 +1141,17 @@ class HomeTab extends StatelessWidget {
 
 // BOOKS TAB
 
-class BooksTab extends StatefulWidget {
+class BooksTab extends StatelessWidget {
   const BooksTab({super.key});
-
-  @override
-  State<BooksTab> createState() => _BooksTabState();
-}
-
-class _BooksTabState extends State<BooksTab> with SingleTickerProviderStateMixin {
-  late TabController _tabController;
-  String _selectedFilter = 'all';
-
-  @override
-  void initState() {
-    super.initState();
-    _tabController = TabController(length: 4, vsync: this);
-  }
-
-  @override
-  void dispose() {
-    _tabController.dispose();
-    super.dispose();
-  }
-
-  List<Book> _getFilteredBooks(List<Book> allBooks) {
-    switch (_selectedFilter) {
-      case 'reading':
-        return allBooks.where((book) => book.status == 'currently_reading').toList();
-      case 'finished':
-        return allBooks.where((book) => book.status == 'finished').toList();
-      case 'to_start':
-        return allBooks.where((book) => book.status == 'want_to_read').toList();
-      default:
-        return allBooks;
-    }
-  }
 
   @override
   Widget build(BuildContext context) {
     return Consumer2<BookProvider, UserProvider>(
       builder: (context, bookProvider, userProvider, child) {
-        final filteredBooks = _getFilteredBooks(bookProvider.books);
-        
         return SafeArea(
           child: Padding(
             padding: const EdgeInsets.all(16.0),
             child: Column(children: [
-              // Filter Tabs
-              Container(
-                decoration: BoxDecoration(
-                  color: Colors.grey.shade100,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: TabBar(
-                  controller: _tabController,
-                  isScrollable: true,
-                  labelColor: Colors.blue.shade600,
-                  unselectedLabelColor: Colors.grey.shade600,
-                  indicatorColor: Colors.blue.shade600,
-                  indicatorWeight: 3,
-                  labelStyle: const TextStyle(fontWeight: FontWeight.w600),
-                  tabs: const [
-                    Tab(text: 'All Books'),
-                    Tab(text: 'Reading'),
-                    Tab(text: 'Finished'),
-                    Tab(text: 'To Start'),
-                  ],
-                  onTap: (index) {
-                    setState(() {
-                      switch (index) {
-                        case 0:
-                          _selectedFilter = 'all';
-                          break;
-                        case 1:
-                          _selectedFilter = 'reading';
-                          break;
-                        case 2:
-                          _selectedFilter = 'finished';
-                          break;
-                        case 3:
-                          _selectedFilter = 'to_start';
-                          break;
-                      }
-                    });
-                  },
-                ),
-              ),
-              const SizedBox(height: 16),
               Row(children: [
                 Expanded(
                   child: Container(
@@ -1260,7 +1203,7 @@ class _BooksTabState extends State<BooksTab> with SingleTickerProviderStateMixin
                         ]),
                   ),
                 )
-              else if (filteredBooks.isEmpty)
+              else if (bookProvider.books.isEmpty)
                 Expanded(
                   child: Center(
                     child: Column(
@@ -1269,12 +1212,12 @@ class _BooksTabState extends State<BooksTab> with SingleTickerProviderStateMixin
                           Icon(Icons.book_outlined,
                               size: 80, color: Colors.grey.shade400),
                           const SizedBox(height: 16),
-                          Text('No books in this category!',
+                          Text('No books yet!',
                               style: TextStyle(
                                   fontSize: 20,
                                   color: Colors.grey.shade600)),
                           const SizedBox(height: 8),
-                          Text('Try a different filter or add books',
+                          Text('Add a book from the Home tab',
                               style: TextStyle(
                                   color: Colors.grey.shade500)),
                         ]),
@@ -1289,9 +1232,9 @@ class _BooksTabState extends State<BooksTab> with SingleTickerProviderStateMixin
                             childAspectRatio: 0.65,
                             crossAxisSpacing: 16,
                             mainAxisSpacing: 16),
-                    itemCount: filteredBooks.length,
+                    itemCount: bookProvider.books.length,
                     itemBuilder: (context, index) => _buildBookCard(
-                        filteredBooks[index],
+                        bookProvider.books[index],
                         context,
                         userProvider.currentUser?.id ?? ''),
                   ),
@@ -1472,36 +1415,12 @@ class CirclesTab extends StatelessWidget {
         padding: const EdgeInsets.all(16.0),
         child:
             Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
-          // Header with Discover
-          Row(
-            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-            children: [
-              const Text('Reading Circles',
-                  style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
-                decoration: BoxDecoration(
-                  color: Colors.blue.shade600,
-                  borderRadius: BorderRadius.circular(20),
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    const Icon(Icons.explore, color: Colors.white, size: 18),
-                    const SizedBox(width: 6),
-                    const Text('Discover',
-                        style: TextStyle(color: Colors.white, fontWeight: FontWeight.w600)),
-                  ],
-                ),
-              ),
-            ],
-          ),
+          const Text('Reading Circles',
+              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
           const SizedBox(height: 8),
           Text('Join reading communities and discuss books together',
               style: TextStyle(fontSize: 14, color: Colors.grey.shade600)),
           const SizedBox(height: 20),
-          
-          // Location Section
           Container(
             padding: const EdgeInsets.all(16),
             decoration: BoxDecoration(
@@ -1511,8 +1430,7 @@ class CirclesTab extends StatelessWidget {
               Icon(Icons.location_on, color: Colors.blue.shade600),
               const SizedBox(width: 8),
               const Expanded(
-                  child: Text('Discover circles near you')),
-              Icon(Icons.chevron_right, color: Colors.blue.shade600),
+                  child: Text('Location-based circles coming soon!')),
             ]),
           ),
           const SizedBox(height: 20),
@@ -1626,27 +1544,27 @@ class _ProfileTabState extends State<ProfileTab> {
                 ),
                 child: Column(children: [
                   Container(
-                    width: 100,
-                    height: 100,
+                    width: 90,
+                    height: 90,
                     decoration: BoxDecoration(
                       color: Colors.white.withValues(alpha: 0.2),
-                      borderRadius: BorderRadius.circular(50),
+                      borderRadius: BorderRadius.circular(45),
                       border: Border.all(color: Colors.white, width: 3),
                     ),
                     child: const Icon(Icons.person,
-                        size: 45, color: Colors.white),
+                        size: 40, color: Colors.white),
                   ),
                   const SizedBox(height: 16),
                   Text(user.displayName,
                       style: const TextStyle(
-                          fontSize: 24,
+                          fontSize: 22,
                           fontWeight: FontWeight.bold,
                           color: Colors.white)),
                   const SizedBox(height: 4),
                   Text(user.email,
                       style: const TextStyle(
                           color: Colors.white70, fontSize: 14)),
-                  const SizedBox(height: 20),
+                  const SizedBox(height: 16),
                   Row(
                       mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                       children: [
