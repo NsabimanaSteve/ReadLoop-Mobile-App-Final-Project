@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:provider/provider.dart';
 import 'readloop_live_server.dart';
 
 class SignupPage extends StatefulWidget {
@@ -11,53 +10,82 @@ class SignupPage extends StatefulWidget {
 
 class _SignupPageState extends State<SignupPage> {
   final _formKey = GlobalKey<FormState>();
-  final _displayNameController = TextEditingController();
+  final _fullNameController = TextEditingController();
   final _emailController = TextEditingController();
   final _passwordController = TextEditingController();
   final _confirmPasswordController = TextEditingController();
-  final _phoneController = TextEditingController();
   bool _isPasswordVisible = false;
   bool _isConfirmPasswordVisible = false;
+  bool _isSubmitting = false;
   String? _errorMessage;
   String? _successMessage;
 
   @override
   void dispose() {
-    _displayNameController.dispose();
+    _fullNameController.dispose();
     _emailController.dispose();
     _passwordController.dispose();
     _confirmPasswordController.dispose();
-    _phoneController.dispose();
     super.dispose();
   }
 
   Future<void> _handleSignup() async {
     if (!(_formKey.currentState?.validate() ?? false)) return;
+
     setState(() {
+      _isSubmitting = true;
       _errorMessage = null;
       _successMessage = null;
     });
 
     try {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      await userProvider.register(
+      // ✅ KEY FIX: Call ApiService.register() directly instead of
+      // userProvider.register() — the provider version calls login()
+      // internally which sets isLoggedIn = true and causes AuthWrapper
+      // to auto-navigate to MainScreen before the user sees anything.
+      final result = await ApiService.register(
         _emailController.text.trim().toLowerCase(),
         _passwordController.text,
-        _displayNameController.text.trim(),
+        _fullNameController.text.trim(),
       );
-      
-      // Show success message before navigation
+
       if (!mounted) return;
-      setState(() {
-        _successMessage = 'Account created successfully! Redirecting to home...';
-      });
-      
-      // AuthWrapper will automatically navigate to MainScreen when UserProvider.isLoggedIn = true
+
+      if (result['success'] == true) {
+        // ✅ Show success, stay on this page
+        setState(() {
+          _isSubmitting = false;
+          _successMessage =
+              'Your account was created successfully! Please sign in.';
+        });
+
+        // ✅ Wait 2 seconds then go back to login page
+        Future.delayed(const Duration(seconds: 2), () {
+          if (mounted) Navigator.of(context).pop();
+        });
+      } else {
+        final raw =
+            result['message']?.toString() ?? result['error']?.toString() ?? '';
+        final message = raw.contains('already') ||
+                raw.contains('exist') ||
+                raw.contains('duplicate')
+            ? 'This email is already registered. Please sign in instead.'
+            : raw.isNotEmpty
+                ? raw
+                : 'Registration failed. Please try again.';
+        setState(() {
+          _isSubmitting = false;
+          _errorMessage = message;
+        });
+      }
     } catch (e) {
       if (!mounted) return;
+      final raw = e.toString().replaceAll('Exception: ', '');
       setState(() {
-        _errorMessage = e.toString().replaceAll('Exception: ', '');
-        _successMessage = null;
+        _isSubmitting = false;
+        _errorMessage = raw.contains('Network') || raw.contains('Connection')
+            ? 'No internet connection. Please check your network.'
+            : raw;
       });
     }
   }
@@ -137,34 +165,33 @@ class _SignupPageState extends State<SignupPage> {
                         children: [
                           const Text('Create Account',
                               style: TextStyle(
-                                  fontSize: 22,
-                                  fontWeight: FontWeight.bold)),
+                                  fontSize: 22, fontWeight: FontWeight.bold)),
                           const SizedBox(height: 4),
                           Text('Join our reading community today',
                               style: TextStyle(
-                                  color: Colors.grey.shade600,
-                                  fontSize: 14)),
+                                  color: Colors.grey.shade600, fontSize: 14)),
                           const SizedBox(height: 24),
 
-                          // Success message
+                          //  Success message
                           if (_successMessage != null) ...[
                             Container(
                               padding: const EdgeInsets.all(12),
                               decoration: BoxDecoration(
-                                color: Colors.green.shade50,
+                                color: Colors.blue.shade50,
                                 borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                    color: Colors.green.shade200),
+                                border:
+                                    Border.all(color: Colors.blue.shade200),
                               ),
                               child: Row(children: [
                                 Icon(Icons.check_circle_outline,
-                                    color: Colors.green.shade600, size: 20),
+                                    color: Colors.blue.shade600, size: 20),
                                 const SizedBox(width: 8),
                                 Expanded(
                                   child: Text(_successMessage!,
                                       style: TextStyle(
-                                          color: Colors.green.shade700,
-                                          fontSize: 13)),
+                                          color: Colors.blue.shade700,
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600)),
                                 ),
                               ]),
                             ),
@@ -178,8 +205,7 @@ class _SignupPageState extends State<SignupPage> {
                               decoration: BoxDecoration(
                                 color: Colors.red.shade50,
                                 borderRadius: BorderRadius.circular(10),
-                                border: Border.all(
-                                    color: Colors.red.shade200),
+                                border: Border.all(color: Colors.red.shade200),
                               ),
                               child: Row(children: [
                                 Icon(Icons.error_outline,
@@ -189,22 +215,24 @@ class _SignupPageState extends State<SignupPage> {
                                   child: Text(_errorMessage!,
                                       style: TextStyle(
                                           color: Colors.red.shade700,
-                                          fontSize: 13)),
+                                          fontSize: 13,
+                                          fontWeight: FontWeight.w600)),
                                 ),
                               ]),
                             ),
                             const SizedBox(height: 16),
                           ],
 
-                          // Display Name
+                          // full Name field
                           TextFormField(
-                            controller: _displayNameController,
+                            controller: _fullNameController,
+                            textCapitalization: TextCapitalization.words,
                             decoration: _inputDecoration(
-                                'Display Name', Icons.person_outline),
+                                'Enter your full name', Icons.person_outline),
                             validator: (v) {
-                              if (v == null || v.isEmpty)
-                                return 'Please enter your display name';
-                              if (v.length < 2)
+                              if (v == null || v.trim().isEmpty)
+                                return 'Please enter your full name';
+                              if (v.trim().length < 2)
                                 return 'Name must be at least 2 characters';
                               return null;
                             },
@@ -218,23 +246,14 @@ class _SignupPageState extends State<SignupPage> {
                             decoration: _inputDecoration(
                                 'Email Address', Icons.email_outlined),
                             validator: (v) {
-                              if (v == null || v.isEmpty)
+                              if (v == null || v.trim().isEmpty)
                                 return 'Please enter your email';
                               if (!RegExp(
                                       r'^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$')
-                                  .hasMatch(v))
+                                  .hasMatch(v.trim()))
                                 return 'Please enter a valid email';
                               return null;
                             },
-                          ),
-                          const SizedBox(height: 16),
-
-                          // Phone (optional)
-                          TextFormField(
-                            controller: _phoneController,
-                            keyboardType: TextInputType.phone,
-                            decoration: _inputDecoration(
-                                'Phone Number (Optional)', Icons.phone_outlined),
                           ),
                           const SizedBox(height: 16),
 
@@ -242,16 +261,15 @@ class _SignupPageState extends State<SignupPage> {
                           TextFormField(
                             controller: _passwordController,
                             obscureText: !_isPasswordVisible,
-                            decoration: _inputDecoration(
-                                    'Password', Icons.lock_outline)
-                                .copyWith(
+                            decoration:
+                                _inputDecoration('Password', Icons.lock_outline)
+                                    .copyWith(
                               suffixIcon: IconButton(
                                 icon: Icon(_isPasswordVisible
                                     ? Icons.visibility
                                     : Icons.visibility_off),
                                 onPressed: () => setState(() =>
-                                    _isPasswordVisible =
-                                        !_isPasswordVisible),
+                                    _isPasswordVisible = !_isPasswordVisible),
                               ),
                             ),
                             validator: (v) {
@@ -300,37 +318,30 @@ class _SignupPageState extends State<SignupPage> {
                           const SizedBox(height: 28),
 
                           // Submit button
-                          Consumer<UserProvider>(
-                            builder: (context, userProvider, child) =>
-                                SizedBox(
-                              width: double.infinity,
-                              height: 52,
-                              child: ElevatedButton(
-                                onPressed: userProvider.isLoading
-                                    ? null
-                                    : _handleSignup,
-                                style: ElevatedButton.styleFrom(
-                                  backgroundColor: Colors.blue.shade600,
-                                  foregroundColor: Colors.white,
-                                  shape: RoundedRectangleBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(12)),
-                                  elevation: 0,
-                                ),
-                                child: userProvider.isLoading
-                                    ? const SizedBox(
-                                        width: 22,
-                                        height: 22,
-                                        child: CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                          color: Colors.white,
-                                        ),
-                                      )
-                                    : const Text('Create Account',
-                                        style: TextStyle(
-                                            fontSize: 16,
-                                            fontWeight: FontWeight.bold)),
+                          SizedBox(
+                            width: double.infinity,
+                            height: 52,
+                            child: ElevatedButton(
+                              onPressed: _isSubmitting ? null : _handleSignup,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.blue.shade600,
+                                foregroundColor: Colors.white,
+                                shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12)),
+                                elevation: 0,
                               ),
+                              child: _isSubmitting
+                                  ? const SizedBox(
+                                      width: 22,
+                                      height: 22,
+                                      child: CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                          color: Colors.white),
+                                    )
+                                  : const Text('Create Account',
+                                      style: TextStyle(
+                                          fontSize: 16,
+                                          fontWeight: FontWeight.bold)),
                             ),
                           ),
                           const SizedBox(height: 16),
@@ -340,8 +351,8 @@ class _SignupPageState extends State<SignupPage> {
                             mainAxisAlignment: MainAxisAlignment.center,
                             children: [
                               Text('Already have an account? ',
-                                  style: TextStyle(
-                                      color: Colors.grey.shade600)),
+                                  style:
+                                      TextStyle(color: Colors.grey.shade600)),
                               GestureDetector(
                                 onTap: () => Navigator.pop(context),
                                 child: Text('Sign In',

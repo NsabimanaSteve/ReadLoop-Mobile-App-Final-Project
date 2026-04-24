@@ -13,6 +13,16 @@ class GoogleBooksService {
   bool _useOpenLibrary = false;
 
   String? _getThumbnail(Map<String, dynamic> volumeInfo) {
+    // Priority 1: Google's own thumbnail (most reliable)
+    final imageLinks = volumeInfo['imageLinks'] as Map<String, dynamic>? ?? {};
+    final raw = imageLinks['thumbnail'] as String?;
+    if (raw != null && raw.isNotEmpty) {
+      return raw
+          .replaceFirst('http://', 'https://')
+          .replaceAll('&edge=curl', '');
+    }
+
+    // Priority 2: OpenLibrary via ISBN (fallback only)
     final identifiers = volumeInfo['industryIdentifiers'] as List<dynamic>? ?? [];
     for (final id in identifiers) {
       final type = id['type'] as String? ?? '';
@@ -21,12 +31,11 @@ class GoogleBooksService {
         return 'https://covers.openlibrary.org/b/isbn/$identifier-M.jpg';
       }
     }
-    final imageLinks = volumeInfo['imageLinks'] as Map<String, dynamic>? ?? {};
-    final raw = imageLinks['thumbnail'] as String?;
-    if (raw == null) return null;
-    return raw.replaceFirst('http://', 'https://').replaceAll('&edge=curl', '');
+
+    return null;
   }
 
+ 
   bool _checkDailyLimit() {
     final now = DateTime.now();
     if (now.day != _lastReset.day) {
@@ -68,7 +77,7 @@ class GoogleBooksService {
             thumbnail: isbnStr.isNotEmpty 
                 ? 'https://covers.openlibrary.org/b/isbn/$isbnStr-M.jpg'
                 : null,
-            totalPages: 200,
+            totalPages: 0,
             status: 'want_to_read',
           );
         }).toList();
@@ -124,7 +133,7 @@ class GoogleBooksService {
             author: authors.isNotEmpty ? authors.first as String : 'Unknown Author',
             description: v['description'] as String? ?? '',
             thumbnail: _getThumbnail(v),
-            totalPages: v['pageCount'] as int? ?? 200,
+            totalPages: int.tryParse(v['pageCount']?.toString() ?? '0') ?? 0,
             status: 'want_to_read',
           );
         }).toList();
@@ -185,7 +194,7 @@ class GoogleBooksService {
             author: authors.isNotEmpty ? authors.first as String : 'Unknown Author',
             description: v['description'] as String? ?? '',
             thumbnail: _getThumbnail(v),
-            totalPages: v['pageCount'] as int? ?? 200,
+            totalPages: int.tryParse(v['pageCount']?.toString() ?? '0') ?? 0,
             status: 'want_to_read',
           );
         }
@@ -228,7 +237,7 @@ class GoogleBooksService {
                 : 'Unknown Author',
             description: bookData['description'] as String? ?? '',
             thumbnail: 'https://covers.openlibrary.org/b/isbn/$isbn-M.jpg',
-            totalPages: bookData['number_of_pages'] as int? ?? 200,
+            totalPages: (bookData['number_of_pages'] as int? ?? 0),
             status: 'want_to_read',
           );
         }
