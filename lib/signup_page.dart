@@ -39,7 +39,7 @@ class _SignupPageState extends State<SignupPage> {
     });
 
     try {
-      // ✅ KEY FIX: Call ApiService.register() directly instead of
+      //  KEY FIX: Call ApiService.register() directly instead of
       // userProvider.register() — the provider version calls login()
       // internally which sets isLoggedIn = true and causes AuthWrapper
       // to auto-navigate to MainScreen before the user sees anything.
@@ -52,7 +52,7 @@ class _SignupPageState extends State<SignupPage> {
       if (!mounted) return;
 
       if (result['success'] == true) {
-        // ✅ Show success, stay on this page
+        //  Show success, stay on this page
         setState(() {
           _isSubmitting = false;
           _successMessage =

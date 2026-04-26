@@ -45,30 +45,40 @@ class PermissionService {
     return false;
   }
 
-  //  PHOTOS / GALLERY (Avatar Upload) 
-  // Returns true if permission granted, false otherwise
   static Future<bool> requestPhotosPermission(BuildContext context) async {
-    // Android 13+ uses READ_MEDIA_IMAGES, older uses READ_EXTERNAL_STORAGE
-    Permission photoPermission = Permission.photos;
+    // On Android 11 and below, use storage permission
+    // On Android 13+, use photos permission
+    Permission photoPermission;
+    
+    if (await Permission.photos.status == PermissionStatus.permanentlyDenied) {
+      // Already permanently denied — go straight to settings
+      if (context.mounted) {
+        _showSettingsDialog(
+          context,
+          title: 'Photo Access Required',
+          message: 'ReadLoop needs access to your photos. Please enable it in Settings.',
+        );
+      }
+      return false;
+    }
 
-    final status = await photoPermission.status;
-    if (status.isGranted || status.isLimited) return true;
+    // Try storage first (works on Android 11), then photos (Android 13+)
+    final storageStatus = await Permission.storage.status;
+    if (storageStatus.isGranted) return true;
+    
+    final storageResult = await Permission.storage.request();
+    if (storageResult.isGranted) return true;
 
-    final result = await photoPermission.request();
-    if (result.isGranted || result.isLimited) return true;
+    // If storage didn't work, try photos permission (Android 13+)
+    final photosResult = await Permission.photos.request();
+    if (photosResult.isGranted || photosResult.isLimited) return true;
 
-    if (result.isPermanentlyDenied && context.mounted) {
-      _showSettingsDialog(
-        context,
-        title: 'Photo Access Required',
-        message:
-            'ReadLoop needs access to your photos to set a profile picture.',
-      );
-    } else if (result.isDenied && context.mounted) {
+    if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
-          content: Text('Photo permission denied. Tap again to retry.'),
+          content: Text('Photo permission denied. Go to Settings → Apps → ReadLoop → Permissions → Storage → Allow'),
           backgroundColor: Colors.orange,
+          duration: Duration(seconds: 4),
         ),
       );
     }

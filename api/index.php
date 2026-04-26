@@ -82,6 +82,7 @@ function setupTables($conn) {
         user_id INT NOT NULL,
         sender_name VARCHAR(255) NOT NULL,
         message TEXT NOT NULL,
+        image_url VARCHAR(500) DEFAULT NULL,
         reply_to INT DEFAULT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
         FOREIGN KEY (circle_id) REFERENCES circles(id) ON DELETE CASCADE,
@@ -111,6 +112,14 @@ function setupTables($conn) {
 
 $conn = getConn();
 setupTables($conn);
+
+// Add image_url column to discussions if it doesn't exist yet
+// (safe to run every time — catches existing tables created before this column was added)
+try {
+    $conn->exec("ALTER TABLE discussions ADD COLUMN image_url VARCHAR(500) DEFAULT NULL");
+} catch (Exception $e) {
+    // Column already exists — ignore
+}
 
 $action = $_GET['action'] ?? $_GET['endpoint'] ?? '';
 $method = $_SERVER['REQUEST_METHOD'];
@@ -149,6 +158,8 @@ switch ($action) {
     default:
         echo json_encode(['success'=>true,'status'=>'ReadLoop API running','usage'=>'Add ?action=ENDPOINT to your URL']);
 }
+
+// ── AUTH ──────────────────────────────────────────────────────────────────────
 
 function handleLogin($conn) {
     $data = json_decode(file_get_contents('php://input'), true);
@@ -201,6 +212,8 @@ function handleUsers($conn) {
     echo json_encode(['success'=>true,'users'=>$stmt->fetchAll(PDO::FETCH_ASSOC)]);
 }
 
+// ── BOOKS ─────────────────────────────────────────────────────────────────────
+
 function handleBooks($conn, $method) {
     if ($method === 'GET') {
         $userId = $_GET['user_id'] ?? null;
@@ -248,6 +261,8 @@ function handleUpdateStreak($conn) {
     echo json_encode(['success'=>true]);
 }
 
+// ── CIRCLES ───────────────────────────────────────────────────────────────────
+
 function handleCircles($conn, $method) {
     if ($method === 'GET') {
         $userId = $_GET['user_id'] ?? null;
@@ -287,6 +302,16 @@ function handleJoinCircle($conn) {
     echo json_encode(['success'=>true]);
 }
 
+function handleLeaveCircle($conn) {
+    $data = json_decode(file_get_contents('php://input'), true);
+    $circle_id = $data['circle_id'] ?? null;
+    $user_id   = $data['user_id']   ?? null;
+    if (!$circle_id || !$user_id) { echo json_encode(['success'=>false,'error'=>'Missing fields']); return; }
+    $stmt = $conn->prepare("DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?");
+    $stmt->execute([$circle_id, $user_id]);
+    echo json_encode(['success'=>true]);
+}
+
 function handleCircleMembers($conn) {
     $circleId = $_GET['circle_id'] ?? null;
     if (!$circleId) { echo json_encode(['success'=>false,'error'=>'circle_id required']); return; }
@@ -295,15 +320,19 @@ function handleCircleMembers($conn) {
     echo json_encode(['success'=>true,'members'=>$stmt->fetchAll(PDO::FETCH_ASSOC)]);
 }
 
+// ── DISCUSSIONS (with image support) ─────────────────────────────────────────
+
 function handleDiscussions($conn, $method) {
     if ($method === 'GET') {
         $circleId = $_GET['circle_id'] ?? null;
-        $userId   = $_GET['user_id'] ?? null;
+        $userId   = $_GET['user_id']   ?? null;
         if (!$circleId) { echo json_encode(['success'=>false,'error'=>'circle_id required']); return; }
+
+        // Fetch top-level messages (reply_to IS NULL), including image_url
         $stmt = $conn->prepare("
             SELECT
                 d.id, d.circle_id, d.user_id, d.sender_name,
-                d.message, d.reply_to, d.created_at,
+                d.message, d.image_url, d.reply_to, d.created_at,
                 COUNT(DISTINCT ml.id) AS like_count,
                 COUNT(DISTINCT r.id)  AS reply_count,
                 MAX(CASE WHEN ml.user_id = :uid THEN 1 ELSE 0 END) AS is_liked
@@ -316,10 +345,12 @@ function handleDiscussions($conn, $method) {
         ");
         $stmt->execute([':cid' => $circleId, ':uid' => $userId ?? 0]);
         $messages = $stmt->fetchAll(PDO::FETCH_ASSOC);
+
+        // For each top-level message, fetch its nested replies (also with image_url)
         $replyStmt = $conn->prepare("
             SELECT
                 d.id, d.circle_id, d.user_id, d.sender_name,
-                d.message, d.reply_to, d.created_at,
+                d.message, d.image_url, d.reply_to, d.created_at,
                 COUNT(DISTINCT ml.id) AS like_count,
                 MAX(CASE WHEN ml.user_id = :uid THEN 1 ELSE 0 END) AS is_liked
             FROM discussions d
@@ -328,36 +359,97 @@ function handleDiscussions($conn, $method) {
             GROUP BY d.id
             ORDER BY d.created_at ASC
         ");
+
         foreach ($messages as &$msg) {
             $msg['like_count']  = (int)$msg['like_count'];
             $msg['reply_count'] = (int)$msg['reply_count'];
             $msg['is_liked']    = (bool)$msg['is_liked'];
+            $msg['image_url']   = $msg['image_url'] ?: null;
+
             $replyStmt->execute([':parent_id' => $msg['id'], ':uid' => $userId ?? 0]);
             $replies = $replyStmt->fetchAll(PDO::FETCH_ASSOC);
             foreach ($replies as &$r) {
                 $r['like_count'] = (int)$r['like_count'];
                 $r['is_liked']   = (bool)$r['is_liked'];
+                $r['image_url']  = $r['image_url'] ?: null;
             }
             $msg['replies'] = $replies;
         }
+
         echo json_encode(['success'=>true,'messages'=>$messages]);
+
     } elseif ($method === 'POST') {
-        $data = json_decode(file_get_contents('php://input'), true);
-        if (!isset($data['circle_id'], $data['user_id'], $data['message'])) { echo json_encode(['success'=>false,'error'=>'circle_id, user_id, message required']); return; }
+
+        // Detect multipart (image upload) vs plain JSON
+        $isMultipart = isset($_FILES['image']) || isset($_POST['circle_id']);
+
+        if ($isMultipart) {
+            $circleId = $_POST['circle_id'] ?? null;
+            $userId   = $_POST['user_id']   ?? null;
+            $message  = $_POST['message']   ?? '';
+            $replyTo  = $_POST['reply_to']  ?? null;
+        } else {
+            $data     = json_decode(file_get_contents('php://input'), true);
+            $circleId = $data['circle_id'] ?? null;
+            $userId   = $data['user_id']   ?? null;
+            $message  = $data['message']   ?? '';
+            $replyTo  = $data['reply_to']  ?? null;
+        }
+
+        if (!$circleId || !$userId) {
+            echo json_encode(['success'=>false,'error'=>'circle_id and user_id required']);
+            return;
+        }
+
+        // Look up sender name
         $uRow = $conn->prepare("SELECT displayName FROM users WHERE id=:id");
-        $uRow->execute([':id'=>$data['user_id']]);
+        $uRow->execute([':id' => $userId]);
         $user = $uRow->fetch(PDO::FETCH_ASSOC);
         $senderName = $user ? $user['displayName'] : 'Unknown';
-        $stmt = $conn->prepare("INSERT INTO discussions (circle_id, user_id, sender_name, message, reply_to) VALUES (:cid, :uid, :sender, :msg, :reply)");
-        $stmt->execute([':cid'=>$data['circle_id'],':uid'=>$data['user_id'],':sender'=>$senderName,':msg'=>$data['message'],':reply'=>$data['reply_to']??null]);
+
+        // Handle image upload if present
+        $imageUrl = null;
+        if (isset($_FILES['image']) && $_FILES['image']['error'] === UPLOAD_ERR_OK) {
+            $file    = $_FILES['image'];
+            $allowed = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+            if (in_array($file['type'], $allowed) && $file['size'] <= 5 * 1024 * 1024) {
+                $uploadDir = __DIR__ . '/discussion_images/';
+                if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+                $ext      = pathinfo($file['name'], PATHINFO_EXTENSION) ?: 'jpg';
+                $filename = 'msg_' . $userId . '_' . time() . '.' . $ext;
+                if (move_uploaded_file($file['tmp_name'], $uploadDir . $filename)) {
+                    $imageUrl = 'http://169.239.251.102:280/~steve.nsabimana/api/discussion_images/' . $filename;
+                }
+            }
+        }
+
+        // Insert the message
+        $stmt = $conn->prepare("INSERT INTO discussions (circle_id, user_id, sender_name, message, image_url, reply_to) VALUES (:cid, :uid, :sender, :msg, :img, :reply)");
+        $stmt->execute([
+            ':cid'    => $circleId,
+            ':uid'    => $userId,
+            ':sender' => $senderName,
+            ':msg'    => $message,
+            ':img'    => $imageUrl,
+            ':reply'  => $replyTo ?: null,
+        ]);
         $msgId = $conn->lastInsertId();
+
         $cRow = $conn->prepare("SELECT name FROM circles WHERE id=:id");
-        $cRow->execute([':id'=>$data['circle_id']]);
+        $cRow->execute([':id' => $circleId]);
         $circle = $cRow->fetch(PDO::FETCH_ASSOC);
-        if ($circle) logActivity($conn, $data['user_id'], $senderName, 'commented in', $circle['name']);
-        echo json_encode(['success'=>true,'id'=>$msgId,'sender_name'=>$senderName]);
+        if ($circle) logActivity($conn, $userId, $senderName, 'commented in', $circle['name']);
+
+        echo json_encode([
+            'success'     => true,
+            'id'          => $msgId,
+            'sender_name' => $senderName,
+            'image_url'   => $imageUrl,
+        ]);
     }
 }
+
+// ── LIKES ─────────────────────────────────────────────────────────────────────
 
 function handleLikeMessage($conn) {
     $data = json_decode(file_get_contents('php://input'), true);
@@ -385,6 +477,8 @@ function handleLikeMessage($conn) {
     echo json_encode(['success'=>true,'liked'=>$liked,'like_count'=>$likeCount]);
 }
 
+// ── ACTIVITY ──────────────────────────────────────────────────────────────────
+
 function handleActivity($conn) {
     $user_id = $_GET['user_id'] ?? null;
     if (!$user_id) { echo json_encode(['success'=>false,'error'=>'user_id required']); return; }
@@ -400,19 +494,19 @@ function logActivity($conn, $userId, $actorName, $action, $target) {
     } catch (Exception $e) {}
 }
 
-function handleLeaveCircle($conn) {
-    $data = json_decode(file_get_contents('php://input'), true);
-    $circle_id = $data['circle_id'] ?? null;
-    $user_id   = $data['user_id']   ?? null;
-    if (!$circle_id || !$user_id) { echo json_encode(['success'=>false,'error'=>'Missing fields']); return; }
-    $stmt = $conn->prepare("DELETE FROM circle_members WHERE circle_id = ? AND user_id = ?");
-    $stmt->execute([$circle_id, $user_id]);
-    echo json_encode(['success'=>true]);
-}
+// ── AVATAR ────────────────────────────────────────────────────────────────────
 
 function handleUploadAvatar($conn) {
+    error_log('POST data: ' . print_r($_POST, true));
+    error_log('FILES data: ' . print_r($_FILES, true));
+
     if (!isset($_FILES['avatar'], $_POST['user_id'])) {
-        echo json_encode(['success'=>false,'error'=>'Missing file or user_id']);
+        echo json_encode([
+            'success'    => false,
+            'error'      => 'Missing file or user_id',
+            'post_keys'  => array_keys($_POST),
+            'files_keys' => array_keys($_FILES)
+        ]);
         return;
     }
     $userId  = $_POST['user_id'];
