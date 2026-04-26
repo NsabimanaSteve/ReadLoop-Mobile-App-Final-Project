@@ -6,7 +6,7 @@ plugins {
 }
 
 android {
-    namespace = "com.readloop.readloop_project"
+    namespace = "com.readloop.readloop"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = flutter.ndkVersion
 
@@ -22,7 +22,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.readloop.readloop_project"
+        applicationId = "com.readloop.readloop"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -33,11 +33,12 @@ android {
 
     buildTypes {
         release {
-            // Use debug signing for now to keep notifications working
-            // TODO: Replace with production keystore for app store release
             signingConfig = signingConfigs.getByName("debug")
+            isMinifyEnabled = false
+            isShrinkResources = false
         }
     }
+
 }
 
 dependencies {

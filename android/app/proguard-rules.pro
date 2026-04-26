@@ -1,0 +1,5 @@
+-keep class com.dexterous.** { *; }
+-keep class io.flutter.** { *; }
+-keepattributes *Annotation*
+-dontwarn okhttp3.**
+-dontwarn okio.**

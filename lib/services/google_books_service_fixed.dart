@@ -77,7 +77,8 @@ class GoogleBooksService {
             thumbnail: isbnStr.isNotEmpty 
                 ? 'https://covers.openlibrary.org/b/isbn/$isbnStr-M.jpg'
                 : null,
-            totalPages: 0,
+            totalPages: int.tryParse(doc['number_of_pages']?.toString() ?? '0') ?? 0,
+
             status: 'want_to_read',
           );
         }).toList();
