@@ -159,7 +159,7 @@ switch ($action) {
         echo json_encode(['success'=>true,'status'=>'ReadLoop API running','usage'=>'Add ?action=ENDPOINT to your URL']);
 }
 
-// ── AUTH ──────────────────────────────────────────────────────────────────────
+//  AUTH 
 
 function handleLogin($conn) {
     $data = json_decode(file_get_contents('php://input'), true);
@@ -212,7 +212,7 @@ function handleUsers($conn) {
     echo json_encode(['success'=>true,'users'=>$stmt->fetchAll(PDO::FETCH_ASSOC)]);
 }
 
-// ── BOOKS ─────────────────────────────────────────────────────────────────────
+//  BOOKS 
 
 function handleBooks($conn, $method) {
     if ($method === 'GET') {
@@ -261,7 +261,7 @@ function handleUpdateStreak($conn) {
     echo json_encode(['success'=>true]);
 }
 
-// ── CIRCLES ───────────────────────────────────────────────────────────────────
+//  CIRCLES 
 
 function handleCircles($conn, $method) {
     if ($method === 'GET') {
@@ -320,7 +320,7 @@ function handleCircleMembers($conn) {
     echo json_encode(['success'=>true,'members'=>$stmt->fetchAll(PDO::FETCH_ASSOC)]);
 }
 
-// ── DISCUSSIONS (with image support) ─────────────────────────────────────────
+//  DISCUSSIONS (with image support) 
 
 function handleDiscussions($conn, $method) {
     if ($method === 'GET') {
@@ -449,7 +449,7 @@ function handleDiscussions($conn, $method) {
     }
 }
 
-// ── LIKES ─────────────────────────────────────────────────────────────────────
+//  LIKES 
 
 function handleLikeMessage($conn) {
     $data = json_decode(file_get_contents('php://input'), true);
@@ -477,7 +477,7 @@ function handleLikeMessage($conn) {
     echo json_encode(['success'=>true,'liked'=>$liked,'like_count'=>$likeCount]);
 }
 
-// ── ACTIVITY ──────────────────────────────────────────────────────────────────
+// ] ACTIVITY 
 
 function handleActivity($conn) {
     $user_id = $_GET['user_id'] ?? null;
@@ -494,7 +494,7 @@ function logActivity($conn, $userId, $actorName, $action, $target) {
     } catch (Exception $e) {}
 }
 
-// ── AVATAR ────────────────────────────────────────────────────────────────────
+//  AVATAR 
 
 function handleUploadAvatar($conn) {
     error_log('POST data: ' . print_r($_POST, true));
