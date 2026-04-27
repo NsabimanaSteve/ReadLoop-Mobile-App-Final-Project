@@ -35,7 +35,7 @@ class _LoginPageState extends State<LoginPage> {
     });
 
     try {
-      // ✅ KEY FIX: Call ApiService.login() directly so we control the
+      //  KEY FIX: Call ApiService.login() directly so we control the
       // full error flow. If we used userProvider.login(), a failure sets
       // isLoading back to false via notifyListeners() which triggers
       // AuthWrapper to rebuild — and if _errorMessage isn't set yet,
@@ -48,7 +48,7 @@ class _LoginPageState extends State<LoginPage> {
       if (!mounted) return;
 
       if (result['success'] == true) {
-        // ✅ Success — feed the result into UserProvider so AuthWrapper
+        // Success — feed the result into UserProvider so AuthWrapper
         // detects isLoggedIn = true and navigates to MainScreen.
         final userProvider = Provider.of<UserProvider>(context, listen: false);
         // We manually replicate what UserProvider.login() does on success,
@@ -56,7 +56,7 @@ class _LoginPageState extends State<LoginPage> {
         userProvider.loginFromResult(result);
         // AuthWrapper will navigate automatically — nothing else needed.
       } else {
-        // ✅ Failure — always show the error, never silently refresh
+        //  Failure — always show the error, never silently refresh
         final raw =
             result['message']?.toString() ?? result['error']?.toString() ?? '';
         setState(() {
@@ -118,7 +118,7 @@ class _LoginPageState extends State<LoginPage> {
                     _buildHeader(theme),
                     const SizedBox(height: 20),
 
-                    // ✅ Error banner — always visible when there's an error
+                    //  Error banner — always visible when there's an error
                     if (_errorMessage != null && _errorMessage!.isNotEmpty)
                       _buildErrorBanner(_errorMessage!),
 
