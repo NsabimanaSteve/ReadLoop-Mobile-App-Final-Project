@@ -64,29 +64,6 @@ class LocationService {
     if (km < 10) return '${km.toStringAsFixed(1)} km';
     return '${km.toStringAsFixed(0)} km';
   }
-
-  static Future<String> getLocationName(double lat, double lon) async {
-    try {
-      final url = Uri.parse(
-          'https://nominatim.openstreetmap.org/reverse?lat=$lat&lon=$lon&format=json');
-      final response = await http.get(url,
-          headers: {'User-Agent': 'ReadLoopApp/1.0'});
-      if (response.statusCode == 200) {
-        final data = json.decode(response.body);
-        final address = data['address'] as Map<String, dynamic>? ?? {};
-        // Build a short readable name: neighbourhood/suburb, city
-        final parts = <String>[];
-        final suburb = address['suburb'] ?? address['neighbourhood'] ?? address['village'] ?? '';
-        final city = address['city'] ?? address['town'] ?? address['county'] ?? '';
-        final country = address['country'] ?? '';
-        if (suburb.isNotEmpty) parts.add(suburb);
-        if (city.isNotEmpty) parts.add(city);
-        if (parts.isEmpty && country.isNotEmpty) parts.add(country);
-        return parts.join(', ');
-      }
-    } catch (_) {}
-    return '${lat.toStringAsFixed(4)}, ${lon.toStringAsFixed(4)}';
-  }
 }
 
 // APP NOTIFICATIONS
@@ -424,21 +401,6 @@ class ApiService {
       debugPrint('Error deleting book: $e');
     }
   }
-  static Future<void> updateTotalPages(String userId, String bookId, int totalPages) async {
-    try {
-      await http.post(
-        _url('update_progress'),
-        headers: {'Content-Type': 'application/json'},
-        body: json.encode({
-          'user_id': userId,
-          'id': bookId,
-          'total_pages': totalPages,
-        }),
-      ).timeout(const Duration(seconds: 10));
-    } catch (e) {
-      debugPrint('Error updating total pages: $e');
-    }
-  }
 
   static Future<void> updateStreak(String userId, int streak) async {
     try {
@@ -590,45 +552,6 @@ class ApiService {
     return null;
   }
 
-  static Future<Map<String, dynamic>?> postMessageWithImage({
-    required String circleId,
-    required String userId,
-    required String message,
-    String? replyTo,
-    String? imagePath,
-  }) async {
-    try {
-      if (imagePath != null) {
-        final request = http.MultipartRequest('POST', _url('discussions'));
-        request.fields['circle_id'] = circleId;
-        request.fields['user_id'] = userId;
-        request.fields['message'] = message;
-        if (replyTo != null) request.fields['reply_to'] = replyTo;
-        request.files.add(await http.MultipartFile.fromPath('image', imagePath));
-        final streamed = await request.send().timeout(const Duration(seconds: 30));
-        final body = await streamed.stream.bytesToString();
-        final data = json.decode(body);
-        if (data['success'] == true) return data;
-      } else {
-        final response = await http.post(
-          _url('discussions'),
-          headers: {'Content-Type': 'application/json'},
-          body: json.encode({
-            'circle_id': circleId,
-            'user_id': userId,
-            'message': message,
-            if (replyTo != null) 'reply_to': replyTo,
-          }),
-        ).timeout(const Duration(seconds: 10));
-        final data = json.decode(response.body);
-        if (data['success'] == true) return data;
-      }
-    } catch (e) {
-      debugPrint('Error posting message: $e');
-    }
-    return null;
-  }
-
   // In ApiService - change this:
   static Future<List<Map<String, dynamic>>> getActivity() async {
     try {
@@ -691,7 +614,36 @@ class ApiService {
         return false;
       }
     }
+    
+    static Future<Map<String, dynamic>?> postMessageWithImage({
+      required String circleId,
+      required String userId,
+      required String message,
+      String? replyTo,
+      String? imagePath,
+    }) async {
+      try {
+        if (imagePath != null) {
+          final request = http.MultipartRequest('POST', _url('discussions'));
+          request.fields['circle_id'] = circleId;
+          request.fields['user_id'] = userId;
+          request.fields['message'] = message;
+          if (replyTo != null) request.fields['reply_to'] = replyTo;
+          request.files.add(await http.MultipartFile.fromPath('image', imagePath));
+          final streamed = await request.send().timeout(const Duration(seconds: 30));
+          final body = await streamed.stream.bytesToString();
+          final data = json.decode(body);
+          if (data['success'] == true) return data;
+        } else {
+          return await postMessage(circleId: circleId, userId: userId, message: message, replyTo: replyTo);
+        }
+      } catch (e) {
+        debugPrint('Error posting message with image: $e');
+      }
+      return null;
+    }
 
+     
     static Future<Map<String, dynamic>?> likeMessage(
       String messageId, String userId) async {
     try {
@@ -859,12 +811,6 @@ class CircleProvider extends ChangeNotifier {
     _circles.removeWhere((c) => c.id == circleId);
     notifyListeners();
   }
-
-  void clearCircles() {
-    _circles = [];
-    _error = null;
-    notifyListeners();
-}
 }
 
 class UserProvider extends ChangeNotifier {
@@ -938,37 +884,16 @@ class UserProvider extends ChangeNotifier {
     }
     setLoading(false);
   }
-  
-  Future<void> logout(BookProvider bookProvider, CircleProvider circleProvider) async {
-    bookProvider.clearBooks();
-    circleProvider.clearCircles();
 
-    final oldUserId = _currentUser?.id;
+  Future<void> logout() async {
     _currentUser = null;
     _isLoggedIn = false;
-    
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove('user');
     await prefs.setBool('isLoggedIn', false);
-    
-    // clear per-user notification prefs
-    if (oldUserId != null) {
-      await prefs.remove('reminder_enabled_$oldUserId');
-      await prefs.remove('reminder_hour_$oldUserId');
-      await prefs.remove('reminder_minute_$oldUserId');
-      await prefs.remove('notifications_enabled_$oldUserId');
-      
-      // Clear Hive book cache
-      try {
-        final box = await Hive.openBox<String>('books_cache_$oldUserId');
-        await box.clear();
-        await box.close();
-      } catch (_) {}
-    }
-    
     notifyListeners();
   }
-  
+
   Future<void> updateAvatar(String avatarUrl) async {
   if (_currentUser != null) {
     _currentUser!.avatarUrl = avatarUrl;
@@ -1063,13 +988,7 @@ class BookProvider extends ChangeNotifier {
     }
   }
 
-  void clearBooks() {
-    _books = [];
-    _error = null;
-    notifyListeners();
-  }
   Future<void> loadBooks(String userId) async {
-    _books = [];
     _isLoading = true;
     _error = null;
     notifyListeners();
@@ -1088,34 +1007,30 @@ class BookProvider extends ChangeNotifier {
     // Fetch fresh from server
     try {
       final fresh = await ApiService.getBooks(userId);
-      if (fresh.isNotEmpty) {
-        _books = fresh;
-        _error = null;
-        // Save to cache only when real data arrives
-        try {
-          final box = await Hive.openBox<String>('books_cache_$userId');
-          final encoded = json.encode(fresh
-              .map((b) => {
-                    'id': b.id,
-                    'title': b.title,
-                    'author': b.author,
-                    'status': b.status,
-                    'total_pages': b.totalPages,
-                    'current_page': b.currentPage,
-                    if (b.description != null) 'description': b.description,
-                    if (b.thumbnail != null) 'thumbnail': b.thumbnail,
-                  })
-              .toList());
-          await box.put('books', encoded);
-        } catch (_) {}
-      }
-      // If fresh is empty — keep cached books silently, no error
+      _books = fresh;
+      _error = null;
+      // Save to cache
+      try {
+        final box = await Hive.openBox<String>('books_cache_$userId');
+        final encoded = json.encode(fresh
+            .map((b) => {
+                  'id': b.id,
+                  'title': b.title,
+                  'author': b.author,
+                  'status': b.status,
+                  'total_pages': b.totalPages,
+                  'current_page': b.currentPage,
+                  if (b.description != null) 'description': b.description,
+                  if (b.thumbnail != null) 'thumbnail': b.thumbnail,
+                })
+            .toList());
+        await box.put('books', encoded);
+      } catch (_) {}
     } catch (e) {
       if (_books.isEmpty) {
         _error = 'No connection. Check your internet and try again.';
       }
     }
-
 
     _isLoading = false;
     notifyListeners();
@@ -1182,13 +1097,22 @@ class BookProvider extends ChangeNotifier {
 
 }
 
+// MAIN
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  tz.initializeTimeZones();
+  await Hive.initFlutter();
+  await NotificationService().initialize();
+  runApp(const ReadLoopApp());
+}
+
 
 class ReadLoopApp extends StatefulWidget {
   const ReadLoopApp({super.key});
   @override
   State<ReadLoopApp> createState() => _ReadLoopAppState();
 }
-
 
 class _ReadLoopAppState extends State<ReadLoopApp> {
   @override
@@ -1224,16 +1148,13 @@ class AuthWrapper extends StatefulWidget {
 
 class _AuthWrapperState extends State<AuthWrapper> {
   @override
-
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      final userProvider = Provider.of<UserProvider>(context, listen: false);
-      userProvider.checkLoginStatus();
+      Provider.of<UserProvider>(context, listen: false).checkLoginStatus();
       PermissionService.requestNotificationPermission(context);
     });
   }
-  
 
   @override
   Widget build(BuildContext context) {
@@ -1306,13 +1227,8 @@ class _MainScreenState extends State<MainScreen> with TickerProviderStateMixin {
             builder: (context, userProvider, child) =>
                 PopupMenuButton<String>(
               onSelected: (value) {
-                if (value == 'logout') {
-                  final bookProvider = Provider.of<BookProvider>(context, listen: false);
-                  final circleProvider = Provider.of<CircleProvider>(context, listen: false);
-                  userProvider.logout(bookProvider, circleProvider);
-                }
+                if (value == 'logout') userProvider.logout();
               },
-              
               itemBuilder: (context) => [
                 const PopupMenuItem(
                   value: 'logout',
@@ -1709,7 +1625,7 @@ class HomeTab extends StatelessWidget {
                   borderRadius: const BorderRadius.only(
                       topLeft: Radius.circular(16),
                       bottomLeft: Radius.circular(16)),
-                  child: Image.network(book.thumbnail!.replaceFirst('http://', 'https://'),
+                  child: Image.network(book.thumbnail!,
                       fit: BoxFit.cover,
                       errorBuilder: (c, e, s) => const Icon(Icons.book,
                           size: 40, color: Colors.white)))
@@ -1927,8 +1843,7 @@ class HomeTab extends StatelessWidget {
                         final book = searchResults[index];
                         return ListTile(
                           leading: book.thumbnail != null
-                              ? Image.network(
-                                  book.thumbnail!.replaceFirst('http://', 'https://'),
+                              ? Image.network(book.thumbnail!,
                                   width: 40,
                                   height: 40,
                                   fit: BoxFit.cover,
@@ -1940,14 +1855,12 @@ class HomeTab extends StatelessWidget {
                               overflow: TextOverflow.ellipsis),
                           subtitle: Text(book.author),
                           onTap: () {
-                            setState(() {
-                              titleController.text = book.title;
-                              authorController.text = book.author;
-                              pagesController.text =
-                                  book.totalPages > 0 ? book.totalPages.toString() : '';
-                              selectedThumbnail = book.thumbnail;
-                              searchResults = [];
-                            });
+                            titleController.text = book.title;
+                            authorController.text = book.author;
+                            pagesController.text =
+                                book.totalPages > 0 ? book.totalPages.toString() : '';
+                            selectedThumbnail = book.thumbnail;
+                            setState(() => searchResults = []);
                           },
                          
                         );
@@ -1971,10 +1884,14 @@ class HomeTab extends StatelessWidget {
                 TextField(
                     controller: pagesController,
                     keyboardType: TextInputType.number,
-                    decoration: const InputDecoration(
+                    decoration: InputDecoration(
                         labelText: 'Total Pages',
                         hintText: 'e.g. 320',
-                        border: OutlineInputBorder())),
+                        helperText: pagesController.text.isEmpty || pagesController.text == '0'
+                            ? '⚠️ Not found — please enter pages manually'
+                            : null,
+                        helperStyle: const TextStyle(color: Colors.orange),
+                        border: const OutlineInputBorder())),
                    
               ]),
             ),
@@ -1985,101 +1902,38 @@ class HomeTab extends StatelessWidget {
                 child: const Text('Cancel')),
             ElevatedButton(
               onPressed: () async {
-                // Validation
-                if (titleController.text.trim().isEmpty) {
+                if (titleController.text.isNotEmpty) {
+                  final userId = Provider.of<UserProvider>(context,
+                              listen: false)
+                          .currentUser
+                          ?.id ??
+                      '';
+                  final book = Book(
+                    id: DateTime.now()
+                        .millisecondsSinceEpoch
+                        .toString(),
+                    title: titleController.text,
+                    author: authorController.text.isEmpty
+                        ? 'Unknown'
+                        : authorController.text,
+                    totalPages:
+                        int.tryParse(pagesController.text) ?? 0,
+                    thumbnail: selectedThumbnail,
+                  );
+                  final added = await Provider.of<BookProvider>(context, listen: false)
+                      .addBook(book, userId);
+                  if (!context.mounted) return;
+                  Navigator.pop(context);
                   ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('⚠️ Please enter a book title.'),
-                      backgroundColor: Colors.red,
-                    ),
+                    added
+                      ? const SnackBar(content: Text('Book added!'), backgroundColor: Colors.green)
+                      : const SnackBar(content: Text('You already have this book!'), backgroundColor: Colors.orange),
                   );
-                  return;
+                
                 }
-
-                final pagesText = pagesController.text.trim();
-                final pages = int.tryParse(pagesText) ?? -1;
-
-                // Check if user typed letters or invalid text
-                if (pagesText.isNotEmpty && pages == -1) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('⚠️ Page count must be a whole number, e.g. 320'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-
-                // Check if negative
-                if (pages < 0 && pagesText.isNotEmpty) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('⚠️ Page count cannot be negative.'),
-                      backgroundColor: Colors.red,
-                    ),
-                  );
-                  return;
-                }
-
-                // Check if unrealistically large
-                if (pages > 20000) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text('⚠️ That page count seems too high. Please check.'),
-                      backgroundColor: Colors.orange,
-                    ),
-                  );
-                  return;
-                }
-
-                // Check if 0 or empty — ask to confirm
-                if (pages <= 0) {
-                  final confirm = await showDialog<bool>(
-                    context: context,
-                    builder: (_) => AlertDialog(
-                      title: const Text('Page count missing'),
-                      content: const Text(
-                        'No page count was entered.\n\n'
-                        'You can add this book now and fill in the page count later, '
-                        'just tap the book in your list under book tab and choose "Add pages". '
-                        'You will need the page count before you can start tracking your reading progress.'),
-                      actions: [
-                        TextButton(
-                          onPressed: () => Navigator.pop(context, false),
-                          child: const Text('Go back')),
-                        ElevatedButton(
-                          onPressed: () => Navigator.pop(context, true),
-                          child: const Text('Add anyway')),
-                      ],
-                    ),
-                  );
-                  if (confirm != true || !context.mounted) return;
-                }
-                              
-                final userId = Provider.of<UserProvider>(context, listen: false)
-                    .currentUser?.id ?? '';
-                final book = Book(
-                  id: DateTime.now().millisecondsSinceEpoch.toString(),
-                  title: titleController.text.trim(),
-                  author: authorController.text.trim().isEmpty
-                      ? 'Unknown'
-                      : authorController.text.trim(),
-                  totalPages: pages,
-                  thumbnail: selectedThumbnail,
-                );
-                final added = await Provider.of<BookProvider>(context, listen: false)
-                    .addBook(book, userId);
-                if (!context.mounted) return;
-                Navigator.pop(context);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  added
-                    ? const SnackBar(content: Text('Book added! 📚'), backgroundColor: Colors.green)
-                    : const SnackBar(content: Text('You already have this book!'), backgroundColor: Colors.orange),
-                );
               },
               child: const Text('Add'),
             ),
-            
           ],
         ),
       ),
@@ -2379,8 +2233,7 @@ class _BooksTabState extends State<BooksTab>
                     ? ClipRRect(
                         borderRadius: const BorderRadius.vertical(
                             top: Radius.circular(16)),
-                        child: Image.network(
-                            book.thumbnail!.replaceFirst('http://', 'https://'),
+                        child: Image.network(book.thumbnail!,
                             width: double.infinity,
                             height: double.infinity,
                             fit: BoxFit.cover,
@@ -2424,32 +2277,6 @@ class _BooksTabState extends State<BooksTab>
                                 color: _getStatusColor(book.status),
                                 fontWeight: FontWeight.w600)),
                       ),
-                      
-                      if (book.totalPages <= 0) ...[
-                        const SizedBox(height: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.orange.shade300),
-                          ),
-                          child: Row(
-                            mainAxisSize: MainAxisSize.min,
-                            children: [
-                              Icon(Icons.info_outline,
-                                  size: 11, color: Colors.orange.shade700),
-                              const SizedBox(width: 4),
-                              Text('Tap to add pages',
-                                  style: TextStyle(
-                                      fontSize: 10,
-                                      color: Colors.orange.shade700,
-                                      fontWeight: FontWeight.w600)),
-                            ],
-                          ),
-                        ),
-                      ],
                     ]),
               ),
             ]),
@@ -2496,78 +2323,16 @@ class _BooksTabState extends State<BooksTab>
           TextButton(
               onPressed: () => Navigator.pop(context),
               child: const Text('Close')),
-          // Add this edit pages button:
-          if (book.totalPages <= 0)
-            TextButton(
-              onPressed: () async {
-                final ctrl = TextEditingController();
-                final entered = await showDialog<int>(
-                  context: context,
-                  builder: (_) => AlertDialog(
-                    title: const Text('Add page count'),
-                    content: TextField(
-                      controller: ctrl,
-                      keyboardType: TextInputType.number,
-                      autofocus: true,
-                      decoration: const InputDecoration(
-                        labelText: 'Total pages',
-                        hintText: 'e.g. 320',
-                        border: OutlineInputBorder(),
-                      ),
-                    ),
-                    actions: [
-                      TextButton(
-                        onPressed: () => Navigator.pop(context),
-                        child: const Text('Cancel')),
-                      ElevatedButton(
-                        onPressed: () {
-                          final p = int.tryParse(ctrl.text.trim()) ?? 0;
-                          if (p > 0) Navigator.pop(context, p);
-                        },
-                        child: const Text('Save')),
-                    ],
-                  ),
-                );
-                if (entered != null && context.mounted) {
-                  book.totalPages = entered;
-                  await ApiService.updateTotalPages(userId, book.serverId ?? book.id, entered);
-                  Navigator.pop(context);
-                  // Reload books so the UI updates immediately
-                  if (context.mounted) {
-                    Provider.of<BookProvider>(context, listen: false).loadBooks(userId);
-                  }
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Page count saved! You can now start reading.'), backgroundColor: Colors.green));
-                }
-                
-              },
-              style: TextButton.styleFrom(foregroundColor: Colors.blue),
-              child: const Text('Add pages'),
-            ),
-
           if (book.status == 'want_to_read')
             ElevatedButton(
               onPressed: () {
-                //  Block start if no pages — tracking won't work
-                if (book.totalPages <= 0) {
-                  Navigator.pop(context);
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                          '⚠️ Please add the total page count before starting to read.'),
-                      backgroundColor: Colors.orange,
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                  return;
-                }
                 Provider.of<BookProvider>(context, listen: false)
                     .updateBookStatus(
                         book.id, 'currently_reading', userId);
                 Navigator.pop(context);
                 AppNotifications.startedReading(book.title);
-                ScaffoldMessenger.of(context).showSnackBar(
-                    const SnackBar(content: Text('Started reading!')));
+                ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+                    content: Text('Started reading!')));
               },
               child: const Text('Start Reading'),
             ),
@@ -2613,10 +2378,9 @@ class _CirclesTabState extends State<CirclesTab> {
   bool _showDiscover = false;
   final _searchController = TextEditingController();
   String _circleQuery = '';
-   Position? _userPosition;
+  Position? _userPosition;
   bool _locationLoading = false;
   String? _locationError;
-  String? _currentLocationName; 
   final Map<String, int> _unreadCounts = {};
   final Map<String, Color> _circleColors = {
     '1': const Color(0xFF5B8AF5),
@@ -2647,7 +2411,6 @@ class _CirclesTabState extends State<CirclesTab> {
     setState(() {
       _locationLoading = true;
       _locationError = null;
-      _currentLocationName = null;
     });
     final position = await LocationService.getCurrentPosition();
     if (!mounted) return;
@@ -2658,17 +2421,11 @@ class _CirclesTabState extends State<CirclesTab> {
       });
       return;
     }
-    //  Get real place name instead of numbers
-    final name = await LocationService.getLocationName(
-        position.latitude, position.longitude);
-    if (!mounted) return;
     setState(() {
       _userPosition = position;
-      _currentLocationName = name;
       _locationLoading = false;
     });
   }
-  
 
   @override
   Widget build(BuildContext context) {
@@ -2794,8 +2551,7 @@ class _CirclesTabState extends State<CirclesTab> {
 
         final myCircles = filtered
             .where((c) => c.memberIds.contains(userId))
-            .toList()
-          ..sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
+            .toList();
 
         if (allCircles.isEmpty) {
           return Center(
@@ -3009,9 +2765,8 @@ class _CirclesTabState extends State<CirclesTab> {
                         .contains(_circleQuery.toLowerCase()))
                 .toList();
 
-        
+        // Sort by distance if we have GPS
         if (_userPosition != null) {
-          // GPS available — sort by nearest distance first
           circles.sort((a, b) {
             double dA = double.infinity;
             double dB = double.infinity;
@@ -3023,13 +2778,8 @@ class _CirclesTabState extends State<CirclesTab> {
               dB = LocationService.distanceKm(_userPosition!.latitude,
                   _userPosition!.longitude, b.latitude!, b.longitude!);
             }
-            // If two circles are the same distance, sort alphabetically as tiebreaker
-            if (dA == dB) return a.name.toLowerCase().compareTo(b.name.toLowerCase());
             return dA.compareTo(dB);
           });
-        } else {
-          // No GPS — fall back to alphabetical order
-          circles.sort((a, b) => a.name.toLowerCase().compareTo(b.name.toLowerCase()));
         }
 
         return SingleChildScrollView(
@@ -3093,9 +2843,8 @@ class _CirclesTabState extends State<CirclesTab> {
                               _locationError != null
                                   ? _locationError!
                                   : _userPosition != null
-                                      ? '📍 ${_currentLocationName ?? 'Getting name...'} • Tap to refresh'
+                                      ? 'Sorted by distance • Tap to refresh'
                                       : 'Tap to enable location-based sorting',
-                              
                               style: TextStyle(
                                   fontSize: 12,
                                   color: _locationError != null
@@ -3269,32 +3018,9 @@ class _CirclesTabState extends State<CirclesTab> {
                         ),
                     ]),
                   ),
-
-                  if (circle.latitude != null && circle.longitude != null)
-                    Padding(
-                      padding: const EdgeInsets.only(top: 4),
-                      child: Row(
-                        children: [
-                          Icon(Icons.my_location,
-                              size: 11, color: Colors.grey.shade400),
-                          const SizedBox(width: 4),
-                          Text(
-                            'Lat: ${circle.latitude!.toStringAsFixed(4)}, '
-                            'Lng: ${circle.longitude!.toStringAsFixed(4)}',
-                            style: TextStyle(
-                                fontSize: 10,
-                                color: Colors.grey.shade400,
-                                fontStyle: FontStyle.italic),
-                          ),
-                        ],
-                      ),
-                    ),
-
-      
               ],
             ),
           ),
-          
           const SizedBox(width: 8),
           // Join / Joined button — state from backend member_ids
           isMember
@@ -3395,21 +3121,19 @@ class _ProfileTabState extends State<ProfileTab> {
     super.initState();
     _loadNotifPref();
   }
-  
+
   Future<void> _loadNotifPref() async {
     final prefs = await SharedPreferences.getInstance();
-    // Get userId to make keys user-specific
-    final userId = Provider.of<UserProvider>(context, listen: false).currentUser?.id ?? 'default';
-    
     if (mounted) {
-      final wasEnabled = prefs.getBool('reminder_enabled_$userId') ?? false;
-      final savedHour = prefs.getInt('reminder_hour_$userId') ?? 20;
-      final savedMinute = prefs.getInt('reminder_minute_$userId') ?? 0;
+      final wasEnabled = prefs.getBool('reminder_enabled') ?? false;
+      final savedHour = prefs.getInt('reminder_hour') ?? 20;
+      final savedMinute = prefs.getInt('reminder_minute') ?? 0;
       setState(() {
         _notificationsEnabled =
-            prefs.getBool('notifications_enabled_$userId') ?? true;
+            prefs.getBool('notifications_enabled') ?? true;
         _reminderEnabled = wasEnabled;
-        _reminderTime = TimeOfDay(hour: savedHour, minute: savedMinute);
+        _reminderTime =
+            TimeOfDay(hour: savedHour, minute: savedMinute);
       });
       if (wasEnabled) {
         await NotificationService().scheduleDailyReminder(
@@ -3417,16 +3141,14 @@ class _ProfileTabState extends State<ProfileTab> {
       }
     }
   }
-  
+
   Future<void> _saveReminderPref() async {
     final prefs = await SharedPreferences.getInstance();
-    final userId = Provider.of<UserProvider>(context, listen: false).currentUser?.id ?? 'default';
-    
-    await prefs.setBool('reminder_enabled_$userId', _reminderEnabled);
-    await prefs.setInt('reminder_hour_$userId', _reminderTime.hour);
-    await prefs.setInt('reminder_minute_$userId', _reminderTime.minute);
+    await prefs.setBool('reminder_enabled', _reminderEnabled);
+    await prefs.setInt('reminder_hour', _reminderTime.hour);
+    await prefs.setInt('reminder_minute', _reminderTime.minute);
   }
-  
+
   Future<void> _pickReminderTime() async {
     final picked = await showTimePicker(
       context: context,
@@ -3449,12 +3171,10 @@ class _ProfileTabState extends State<ProfileTab> {
       }
     }
   }
-  
+
   Future<void> _toggleNotifications(bool value) async {
     final prefs = await SharedPreferences.getInstance();
-    final userId = Provider.of<UserProvider>(context, listen: false).currentUser?.id ?? 'default';
-    
-    await prefs.setBool('notifications_enabled_$userId', value);
+    await prefs.setBool('notifications_enabled', value);
     setState(() => _notificationsEnabled = value);
     if (value) {
       await AppNotifications.notificationsEnabled();
@@ -3462,7 +3182,7 @@ class _ProfileTabState extends State<ProfileTab> {
       await HapticFeedback.lightImpact();
     }
   }
-  
+
   @override
   Widget build(BuildContext context) {
     return Consumer2<UserProvider, BookProvider>(
@@ -3739,13 +3459,9 @@ class _ProfileTabState extends State<ProfileTab> {
                 _settingsItem(
                     'Sign Out', Icons.logout, false, context,
                     isDestructive: true,
-                    onTap: () {
-                      final bookProvider = Provider.of<BookProvider>(context, listen: false);
-                      final circleProvider = Provider.of<CircleProvider>(context, listen: false);
-                      Provider.of<UserProvider>(context, listen: false)
-                          .logout(bookProvider, circleProvider);
-                    }),
-             
+                    onTap: () =>
+                        Provider.of<UserProvider>(context, listen: false)
+                            .logout()),
               ],
             ),
           ),
@@ -4120,7 +3836,6 @@ class _DiscussionScreenState extends State<DiscussionScreen> {
 
   Future<void> _sendMessage() async {
     final text = _msgController.text.trim();
-    // allow send if text OR image present
     if ((text.isEmpty && _pendingImagePath == null) || _currentUserId == null) return;
     setState(() => _isSending = true);
     _msgController.clear();
@@ -4135,27 +3850,23 @@ class _DiscussionScreenState extends State<DiscussionScreen> {
     );
 
     if (result != null) {
-      _messages.add({
-        'id': result['id']?.toString() ?? '',
-        'user_id': _currentUserId,
-        'sender_name': _currentUserName,
-        'message': text,
-        'image_url': result['image_url'],
-        'avatar_url': Provider.of<UserProvider>(context, listen: false).currentUser?.avatarUrl ?? '',
-        'reply_to': null,
-        'created_at': DateTime.now().toIso8601String(),
-        'like_count': 0,
-        'is_liked': false,
-        'reply_count': 0,
-        'replies': [],
+      setState(() {
+        _messages.add({
+          'id': result['id']?.toString() ?? '',
+          'user_id': _currentUserId,
+          'sender_name': _currentUserName,
+          'message': text,
+          'image_url': result['image_url'],
+          'avatar_url': '',
+          'reply_to': null,
+          'created_at': DateTime.now().toIso8601String(),
+          'like_count': 0,
+          'is_liked': false,
+          'reply_count': 0,
+          'replies': [],
+        });
       });
-     
       _scrollToBottom();
-      await AppNotifications.newDiscussionMessage(
-        circleName: widget.circle.name,
-        senderName: _currentUserName ?? 'You',
-        messagePreview: text.isNotEmpty ? text : '📷 Image',
-      );
     } else {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
@@ -4330,50 +4041,30 @@ class _DiscussionScreenState extends State<DiscussionScreen> {
                         },
                       ),
           ),
-          // Image preview strip
-          if (_pendingImagePath != null)
-            Container(
-              color: Colors.white,
-              padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
-              child: Row(
-                children: [
-                  ClipRRect(
-                    borderRadius: BorderRadius.circular(8),
-                    child: Image.file(File(_pendingImagePath!),
-                        width: 64, height: 64, fit: BoxFit.cover),
-                  ),
-                  const SizedBox(width: 8),
-                  Text('Image ready to send',
-                      style: TextStyle(fontSize: 13, color: Colors.grey.shade600)),
-                  const Spacer(),
-                  IconButton(
-                    icon: const Icon(Icons.close, size: 18),
-                    onPressed: () => setState(() => _pendingImagePath = null),
-                  ),
-                ],
-              ),
-            ),
           Container(
             color: Colors.white,
-            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            padding:
+                const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
             child: SafeArea(
               top: false,
               child: Row(
                 children: [
-                  // Image picker button
+                  // ← ADD THIS BLOCK:
                   GestureDetector(
                     onTap: _pickImage,
                     child: Container(
-                      width: 40, height: 40,
-                      margin: const EdgeInsets.only(right: 8),
+                      width: 44,
+                      height: 44,
                       decoration: BoxDecoration(
-                        color: Colors.grey.shade100,
+                        color: Colors.grey.shade200,
                         shape: BoxShape.circle,
                       ),
                       child: Icon(Icons.image_outlined,
                           color: Colors.grey.shade600, size: 22),
                     ),
                   ),
+                  const SizedBox(width: 8),
+                  // ← END OF ADDED BLOCK
                   Expanded(
                     child: Container(
                       decoration: BoxDecoration(
@@ -4536,43 +4227,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
             Row(
               crossAxisAlignment: CrossAxisAlignment.center,
               children: [
-                GestureDetector(
-                  onTap: () {
-                    final avatarUrl =
-                        widget.message['avatar_url']?.toString() ?? '';
-                    showModalBottomSheet(
-                      context: context,
-                      backgroundColor: Colors.transparent,
-                      isScrollControlled: true,
-                      builder: (_) => _UserProfileSheet(
-                        userId:
-                            widget.message['user_id']?.toString() ?? '',
-                        displayName: senderName,
-                        avatarUrl: avatarUrl,
-                      ),
-                    );
-                  },
-                  child: CircleAvatar(
-                    radius: 20,
-                    backgroundColor: avatarColor,
-                    backgroundImage: (widget.message['avatar_url'] != null &&
-                            widget.message['avatar_url']
-                                .toString()
-                                .isNotEmpty)
-                        ? NetworkImage(
-                            widget.message['avatar_url'].toString())
-                        : null,
-                    child: (widget.message['avatar_url'] == null ||
-                            widget.message['avatar_url']
-                                .toString()
-                                .isEmpty)
-                        ? Text(initials,
-                            style: const TextStyle(
-                                color: Colors.white,
-                                fontSize: 13,
-                                fontWeight: FontWeight.bold))
-                        : null,
-                  ),
+                CircleAvatar(
+                  radius: 20,
+                  backgroundColor: avatarColor,
+                  child: Text(initials,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.bold)),
                 ),
                 const SizedBox(width: 10),
                 Expanded(
@@ -4586,8 +4248,7 @@ class _MessageBubbleState extends State<_MessageBubble> {
                               color: Colors.black87)),
                       Text(timeStr,
                           style: TextStyle(
-                              fontSize: 12,
-                              color: Colors.grey.shade500)),
+                              fontSize: 12, color: Colors.grey.shade500)),
                     ],
                   ),
                 ),
@@ -4600,60 +4261,14 @@ class _MessageBubbleState extends State<_MessageBubble> {
                 ),
               ],
             ),
-            
+
             // Message body
             const SizedBox(height: 10),
             Text(text,
                 style: const TextStyle(
                     fontSize: 15, color: Colors.black87, height: 1.4)),
 
-            // Image in message (tap to fullscreen like Instagram)
-            if ((widget.message['image_url'] as String?)?.isNotEmpty == true) ...[
-              const SizedBox(height: 8),
-              GestureDetector(
-                onTap: () {
-                  final imageUrl = widget.message['image_url'] as String;
-                  showDialog(
-                    context: context,
-                    barrierColor: Colors.black87,
-                    builder: (_) => Dialog(
-                      backgroundColor: Colors.transparent,
-                      insetPadding: EdgeInsets.zero,
-                      child: GestureDetector(
-                        onTap: () => Navigator.pop(context),
-                        child: InteractiveViewer(
-                          child: Image.network(imageUrl,
-                            fit: BoxFit.contain,
-                            errorBuilder: (c, e, s) =>
-                                const Icon(Icons.broken_image, color: Colors.white, size: 80),
-                          ),
-                        ),
-                      ),
-                    ),
-                  );
-                },
-                child: ClipRRect(
-                  borderRadius: BorderRadius.circular(12),
-                  child: Image.network(
-                    (widget.message['image_url'] as String),
-    
-                    fit: BoxFit.cover,
-                    width: double.infinity,
-                    height: 200,
-                    loadingBuilder: (context, child, progress) {
-                      if (progress == null) return child;
-                      return Container(height: 200, color: Colors.grey.shade200,
-                        child: const Center(child: CircularProgressIndicator(strokeWidth: 2)));
-                    },
-                    errorBuilder: (c, e, s) => Container(height: 80,
-                      color: Colors.grey.shade100,
-                      child: Center(child: Icon(Icons.broken_image, color: Colors.grey.shade400))),
-                  ),
-                ),
-              ),
-            ],
-
-           // Like + Reply row
+            // Like + Reply row
             const SizedBox(height: 12),
             Row(
               children: [
@@ -4933,192 +4548,6 @@ class _MembersSheetState extends State<_MembersSheet> {
                     dense: true,
                   )),
             
-        ],
-      ),
-    );
-  }
-}
-// USER PROFILE BOTTOM SHEET
-// Shown when tapping an avatar in discussion
-
-class _UserProfileSheet extends StatefulWidget {
-  final String userId;
-  final String displayName;
-  final String avatarUrl;
-
-  const _UserProfileSheet({
-    required this.userId,
-    required this.displayName,
-    required this.avatarUrl,
-  });
-
-  @override
-  State<_UserProfileSheet> createState() => _UserProfileSheetState();
-}
-
-class _UserProfileSheetState extends State<_UserProfileSheet> {
-  String? _resolvedAvatarUrl;
-  bool _loading = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _loadAvatar();
-  }
-
-  Future<void> _loadAvatar() async {
-    // Use avatar passed directly from the message if available
-    if (widget.avatarUrl.isNotEmpty) {
-      if (mounted) {
-        setState(() {
-          _resolvedAvatarUrl = widget.avatarUrl;
-          _loading = false;
-        });
-      }
-      return;
-    }
-    // Otherwise try to find from circle members
-    try {
-      final members = await ApiService.getCircleMembers('0');
-      final match = members.firstWhere(
-        (m) => m['id']?.toString() == widget.userId,
-        orElse: () => {},
-      );
-      if (match.isNotEmpty && mounted) {
-        setState(() {
-          _resolvedAvatarUrl = match['avatar_url']?.toString() ?? '';
-          _loading = false;
-        });
-        return;
-      }
-    } catch (_) {}
-    if (mounted) setState(() => _loading = false);
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final avatarUrl = _resolvedAvatarUrl ?? '';
-    final initials = widget.displayName.length >= 2
-        ? widget.displayName.substring(0, 2).toUpperCase()
-        : widget.displayName.substring(0, 1).toUpperCase();
-
-    final avatarColors = [
-      const Color(0xFF6C63FF),
-      const Color(0xFF4CAF50),
-      const Color(0xFFFF7043),
-      const Color(0xFF29B6F6),
-      const Color(0xFFEC407A),
-      const Color(0xFF26A69A),
-    ];
-    final avatarColor =
-        avatarColors[widget.displayName.hashCode.abs() % avatarColors.length];
-    final hasAvatar = avatarUrl.isNotEmpty;
-
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-      ),
-      padding: const EdgeInsets.fromLTRB(24, 16, 24, 32),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          // Drag handle
-          Container(
-            width: 40,
-            height: 4,
-            margin: const EdgeInsets.only(bottom: 20),
-            decoration: BoxDecoration(
-              color: Colors.grey.shade300,
-              borderRadius: BorderRadius.circular(2),
-            ),
-          ),
-
-          if (_loading)
-            const Padding(
-              padding: EdgeInsets.all(32),
-              child: CircularProgressIndicator(),
-            )
-          else ...[
-            // Avatar — tap to see fullscreen
-            GestureDetector(
-              onTap: hasAvatar
-                  ? () {
-                      showDialog(
-                        context: context,
-                        barrierColor: Colors.black87,
-                        builder: (_) => Dialog(
-                          backgroundColor: Colors.transparent,
-                          insetPadding: EdgeInsets.zero,
-                          child: GestureDetector(
-                            onTap: () => Navigator.pop(context),
-                            child: InteractiveViewer(
-                              child: Image.network(
-                                avatarUrl,
-                                fit: BoxFit.contain,
-                                errorBuilder: (c, e, s) => const Icon(
-                                  Icons.broken_image,
-                                  color: Colors.white,
-                                  size: 80,
-                                ),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }
-                  : null,
-              child: Stack(
-                alignment: Alignment.bottomRight,
-                children: [
-                  CircleAvatar(
-                    radius: 55,
-                    backgroundColor: avatarColor,
-                    backgroundImage:
-                        hasAvatar ? NetworkImage(avatarUrl) : null,
-                    child: !hasAvatar
-                        ? Text(
-                            initials,
-                            style: const TextStyle(
-                                fontSize: 32,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.white),
-                          )
-                        : null,
-                  ),
-                  if (hasAvatar)
-                    Container(
-                      padding: const EdgeInsets.all(6),
-                      decoration: const BoxDecoration(
-                        color: Colors.blue,
-                        shape: BoxShape.circle,
-                      ),
-                      child: const Icon(Icons.zoom_in,
-                          color: Colors.white, size: 16),
-                    ),
-                ],
-              ),
-            ),
-
-            const SizedBox(height: 16),
-
-            Text(
-              widget.displayName,
-              style: const TextStyle(
-                  fontSize: 22, fontWeight: FontWeight.bold),
-            ),
-
-            if (hasAvatar) ...[
-              const SizedBox(height: 8),
-              Text(
-                'Tap photo to view full size',
-                style: TextStyle(
-                    fontSize: 12, color: Colors.grey.shade400),
-              ),
-            ],
-
-            const SizedBox(height: 8),
-          ],
         ],
       ),
     );
